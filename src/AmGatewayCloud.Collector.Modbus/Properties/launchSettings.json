@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "AmGatewayCloud.Collector.Modbus": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:56120;http://localhost:56121"
+    }
+  }
+}

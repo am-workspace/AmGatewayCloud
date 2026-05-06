@@ -27,11 +27,9 @@ try
     builder.Services.AddHostedService<ModbusCollectorService>();
 
     // Serilog
-    builder.Services.AddSerilog(static _ =>
+    builder.Services.AddSerilog(static configure =>
     {
-        Log.Logger = new LoggerConfiguration()
-            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-            .CreateLogger();
+        configure.WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}");
     });
 
     var host = builder.Build();

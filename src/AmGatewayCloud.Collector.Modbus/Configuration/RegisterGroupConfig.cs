@@ -10,4 +10,10 @@ public class RegisterGroupConfig
     public double Scale { get; set; } = 1.0;
     public double Offset { get; set; } = 0.0;
     public List<string> Tags { get; set; } = [];
+
+    /// <summary>
+    /// Per-tag scale factor overrides. Key = tag name, Value = ScaleFactor.
+    /// If a tag is present here, its ScaleFactor takes precedence over the group-level ScaleFactor.
+    /// </summary>
+    public Dictionary<string, double> TagScales { get; set; } = [];
 }

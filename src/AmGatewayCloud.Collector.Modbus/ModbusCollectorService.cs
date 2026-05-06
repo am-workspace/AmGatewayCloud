@@ -95,7 +95,7 @@ public class ModbusCollectorService : BackgroundService
                 var holding = await _connection.ReadHoldingRegistersAsync(group.Start, (ushort)group.Count, ct);
                 for (int i = 0; i < group.Count; i++)
                 {
-                    var value = ApplyScale(holding[i], group);
+                    var value = ApplyScale(holding[i], group, group.Tags[i]);
                     points.Add(DataPoint.Good(_config.DeviceId, group.Tags[i], value, timestamp, _config.TenantId));
                 }
                 break;
@@ -104,7 +104,7 @@ public class ModbusCollectorService : BackgroundService
                 var input = await _connection.ReadInputRegistersAsync(group.Start, (ushort)group.Count, ct);
                 for (int i = 0; i < group.Count; i++)
                 {
-                    var value = ApplyScale(input[i], group);
+                    var value = ApplyScale(input[i], group, group.Tags[i]);
                     points.Add(DataPoint.Good(_config.DeviceId, group.Tags[i], value, timestamp, _config.TenantId));
                 }
                 break;
@@ -129,16 +129,25 @@ public class ModbusCollectorService : BackgroundService
         return points;
     }
 
-    private static double ApplyScale(ushort rawValue, RegisterGroupConfig group)
+    private static double ApplyScale(ushort rawValue, RegisterGroupConfig group, string tag)
     {
-        // ScaleFactor compatibility: if ScaleFactor != 1.0 and Scale == 1.0, convert
-        double scale = group.Scale;
-        if (group.ScaleFactor != 1.0 && group.Scale == 1.0)
+        // Per-tag ScaleFactor takes precedence
+        double scaleFactor;
+        if (group.TagScales.TryGetValue(tag, out var tagScale))
         {
-            scale = 1.0 / group.ScaleFactor;
+            scaleFactor = tagScale;
+        }
+        else
+        {
+            // ScaleFactor compatibility: if ScaleFactor != 1.0 and Scale == 1.0, convert
+            scaleFactor = group.Scale;
+            if (group.ScaleFactor != 1.0 && group.Scale == 1.0)
+            {
+                scaleFactor = group.ScaleFactor;
+            }
         }
 
-        return rawValue * scale + group.Offset;
+        return rawValue / scaleFactor + group.Offset;
     }
 
     private async Task OutputBatchAsync(List<DataPoint> points, CancellationToken ct)
