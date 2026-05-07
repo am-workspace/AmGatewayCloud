@@ -26,7 +26,7 @@ public class DataPoint
     /// <summary>扩展属性</summary>
     public Dictionary<string, object>? Properties { get; set; }
 
-    public static DataPoint Good(string deviceId, string tag, object? value, DateTime timestamp, string? tenantId = null)
+    public static DataPoint Good(string deviceId, string tag, object? value, DateTime timestamp, string? tenantId = null, string? groupName = null)
     {
         return new DataPoint
         {
@@ -36,11 +36,21 @@ public class DataPoint
             ValueType = value?.GetType().Name.ToLowerInvariant(),
             Timestamp = timestamp,
             Quality = DataQuality.Good,
-            TenantId = tenantId
+            TenantId = tenantId,
+            Properties = groupName is not null ? new Dictionary<string, object> { ["GroupName"] = groupName } : null
         };
     }
 
-    public static DataPoint Bad(string deviceId, string tag, DateTime timestamp, string? tenantId = null)
+    /// <summary>
+    /// 创建质量为 Bad 的数据点（值为 null，表示读取失败）。
+    /// </summary>
+    /// <param name="deviceId">设备标识</param>
+    /// <param name="tag">数据标签名</param>
+    /// <param name="timestamp">采集时间（UTC）</param>
+    /// <param name="tenantId">租户标识（可选）</param>
+    /// <param name="groupName">寄存器组名称（写入 Properties.GroupName，可选）</param>
+    /// <returns>Bad 质量的 DataPoint</returns>
+    public static DataPoint Bad(string deviceId, string tag, DateTime timestamp, string? tenantId = null, string? groupName = null)
     {
         return new DataPoint
         {
@@ -50,7 +60,8 @@ public class DataPoint
             ValueType = null,
             Timestamp = timestamp,
             Quality = DataQuality.Bad,
-            TenantId = tenantId
+            TenantId = tenantId,
+            Properties = groupName is not null ? new Dictionary<string, object> { ["GroupName"] = groupName } : null
         };
     }
 }

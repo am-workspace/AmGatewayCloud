@@ -62,6 +62,12 @@ public class CollectorConfigValidator : IValidateOptions<CollectorConfig>
             errors.Add($"Register group '{group.Name}': Tags.Count ({group.Tags.Count}) must equal Count ({group.Count})");
     }
 
+    /// <summary>
+    /// 检查同类型寄存器组之间的地址范围是否重叠。
+    /// 按起始地址排序后逐一比较相邻组的地址范围。
+    /// </summary>
+    /// <param name="groups">所有寄存器组</param>
+    /// <param name="errors">错误收集列表</param>
     private static void ValidateNoOverlap(List<RegisterGroupConfig> groups, List<string> errors)
     {
         foreach (var typeGroup in groups.GroupBy(g => g.Type))

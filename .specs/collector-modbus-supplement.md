@@ -518,3 +518,43 @@ public class CollectorConfig
 | ⚪ P3 | 32位寄存器支持（9.3） | ❌ 未做 | 当前虚拟从站用16位，工业场景常见 |
 | ⚪ P3 | 健康检查端点（9.4） | ❌ 未做 | 阶段5容器化时加 |
 | ⚪ P3 | 变化检测去重（9.5） | ❌ 未做 | 数据量大时再考虑 |
+
+---
+
+## 11. 代码审查遗留问题
+
+> 首轮代码审查发现的小问题，当前不影响运行，后续迭代时处理。
+
+### 11.1 ReadWithRetryAsync 锁范围竞态（P3）
+
+```csharp
+// ModbusConnection.cs ReadWithRetryAsync
+lock (_lock)
+{
+    if (!_isConnected || _master == null)
+        throw new InvalidOperationException("Not connected to Modbus slave");
+}
+return await readFunc();  // ← 锁已释放，_master 可能在此刻被重连线程 Dispose
+```
+
+检查连接状态时加了锁，但实际调用 `_master.ReadXxx` 时锁已释放。理论上存在 `_master` 被重连线程 Dispose 后再调用的竞态。
+
+**当前影响**：无。`ModbusCollectorService` 是单线程顺序轮询，不会并发调用。但如果将来多设备复用 `ModbusConnection` 就会出问题。
+
+**处理方案**：留 TODO，多设备支持时一并解决。
+
+### 11.2 DataPoint.Value 序列化仍需自定义 JsonConverter（P2）
+
+`ValueType` 字段解决了"下游知道类型"的问题，但 `Value` 是 `object?` 类型，System.Text.Json 序列化 `object` 时仍需要自定义 `JsonConverter`，否则值类型会丢失。
+
+**当前影响**：阶段1输出到控制台无影响。阶段3切 RabbitMQ 时必须解决。
+
+**处理方案**：阶段3之前实现 `DataPointJsonConverter`，现在先在代码中加 TODO 注释。
+
+### 11.3 ConsoleDataOutput.WriteBatchAsync 缺少分组名（P3）- 已处理
+
+原方案设计输出格式为 `[simulator-001] sensors: temperature=85.3 ...`，带组名前缀。当前实现没有组名，输出为 `[simulator-001] temperature=85.3 ...`，调试时不太方便区分是哪个寄存器组的数据。
+
+**当前影响**：小，不影响功能。
+
+**处理方案**：在 `DataPoint.Properties` 中塞组名，或让 `WriteBatchAsync` 接收组名参数。

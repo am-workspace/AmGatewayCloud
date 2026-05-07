@@ -5,6 +5,10 @@ using NModbus;
 
 namespace AmGatewayCloud.Collector.Modbus;
 
+/// <summary>
+/// Modbus TCP 连接管理：建立/断开/重连/读取寄存器。
+/// 读取失败自动标记断连状态；重连使用指数退避策略。
+/// </summary>
 public class ModbusConnection : IDisposable
 {
     private readonly ModbusConfig _config;
@@ -16,8 +20,14 @@ public class ModbusConnection : IDisposable
     private readonly object _lock = new();
     private int _reconnectAttempt;
 
+    /// <summary>当前是否已连接</summary>
     public bool IsConnected => _isConnected;
 
+    /// <summary>
+    /// 初始化 ModbusConnection。
+    /// </summary>
+    /// <param name="config">采集器配置（从中获取 Modbus 子节）</param>
+    /// <param name="logger">日志记录器</param>
     public ModbusConnection(IOptions<CollectorConfig> config, ILogger<ModbusConnection> logger)
     {
         _config = config.Value.Modbus;
@@ -164,6 +174,9 @@ public class ModbusConnection : IDisposable
         return delay;
     }
 
+    /// <summary>
+    /// 释放资源：断开连接并抑制终结器。
+    /// </summary>
     public void Dispose()
     {
         Disconnect();

@@ -54,7 +54,7 @@ public class ModbusCollectorService : BackgroundService
 
                     // Output Bad quality points
                     var badPoints = group.Tags.Select(tag =>
-                        DataPoint.Bad(_config.DeviceId, tag, timestamp, _config.TenantId)).ToList();
+                        DataPoint.Bad(_config.DeviceId, tag, timestamp, _config.TenantId, group.Name)).ToList();
                     await OutputBatchAsync(badPoints, ct);
                 }
             }
@@ -150,6 +150,12 @@ public class ModbusCollectorService : BackgroundService
         return rawValue / scaleFactor + group.Offset;
     }
 
+    /// <summary>
+    /// 将一批数据点分发到所有已注册的 IDataOutput 通道。
+    /// 单个通道写入失败不影响其他通道。
+    /// </summary>
+    /// <param name="points">待输出数据点列表</param>
+    /// <param name="ct">取消令牌</param>
     private async Task OutputBatchAsync(List<DataPoint> points, CancellationToken ct)
     {
         foreach (var output in _outputs)
