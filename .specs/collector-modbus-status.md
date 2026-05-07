@@ -15,6 +15,7 @@ P1 补充项                       ███████████████
 P2 补充项                       ████████████████▒▒▒▒  2/3    67%
 P3 补充项                       ████████▒▒▒▒▒▒▒▒▒▒▒▒  2/6    33%
 代码审查遗留                     ████████▒▒▒▒▒▒▒▒▒▒▒▒  1/3    33%
+MQTT 输出通道                   ████████████████████  1/1   100%
 ```
 
 ---
@@ -130,6 +131,9 @@ P3 补充项                       ████████▒▒▒▒▒▒▒
 | **ScaleFactor / TagScales** | 有（寄存器原始值需缩放） | 无（OPC UA 返回工程值） | Modbus 特有，保留 |
 | **Writable 伏笔** | ❌ 无 | ✅ NodeConfig.Writable | Modbus 的 Coil 天然可写，后续可加 |
 | **配置校验** | IValidateOptions | IValidateOptions | 模式统一 |
+| **MQTT 输出** | ✅ MqttOutput | ✅ MqttOutput | 结构一致，Topic 区分：modbus/opcua |
+| **MQTT ClientId** | AmGatewayCloud-Modbus-{DeviceId} | AmGatewayCloud-OpcUa-{DeviceId} | 拼接 DeviceId 避免多实例冲突 |
+| **MQTT Topic** | amgateway/modbus/{DeviceId} | amgateway/opcua/{DeviceId} | 协议名区分 |
 
 ---
 
@@ -184,8 +188,9 @@ P3 补充项                       ████████▒▒▒▒▒▒▒
 | 阶段 | 变化 | 前置条件 |
 |------|------|---------|
 | **阶段1 (当前)** | ✅ 控制台输出闭环 | 无 |
+| **阶段1+** | ✅ 新增 `MqttOutput : IDataOutput` | 本地 Mosquitto 验证通过 |
 | **阶段2** | 新增 `InfluxDbOutput : IDataOutput` | InfluxDB 部署 |
-| **阶段3a** | 新增 `RabbitMqOutput : IDataOutput`；抽取 `Collector.Abstractions`；实现 `DataPointJsonConverter` | RabbitMQ 部署；**阶段3前必须完成 Abstractions 抽取和 JsonConverter** |
+| **阶段3a** | 边缘聚合网关（Edge Hub）消费 MQTT → AMQP；抽取 `Collector.Abstractions`；实现 `DataPointJsonConverter` | RabbitMQ 部署；**阶段3前必须完成 Abstractions 抽取和 JsonConverter** |
 | **阶段3b** | 无变化（采集器本身不变） | — |
 | **阶段4** | 无变化 | — |
 | **阶段5** | 容器化 (Dockerfile)；健康检查端点；Serilog→Seq；OpenTelemetry 追踪 | Docker 环境 |
@@ -210,13 +215,14 @@ P3 补充项                       ████████▒▒▒▒▒▒▒
 ```
 src/AmGatewayCloud.Collector.Modbus/
 ├── AmGatewayCloud.Collector.Modbus.csproj
-├── Program.cs                              # 入口 + DI + 异常处理 + Bootstrap Logger
-├── appsettings.json                        # 6 组 54 标签默认配置 + TagScales
+├── Program.cs                              # 入口 + DI + 异常处理 + Bootstrap Logger + MQTT 条件注册
+├── appsettings.json                        # 6 组 54 标签默认配置 + TagScales + MQTT 配置
 ├── ModbusConnection.cs                     # 连接管理 + 自动重连 + 指数退避
 ├── ModbusCollectorService.cs               # BackgroundService 采集主循环
 ├── Configuration/
-│   ├── CollectorConfig.cs                  # 顶层配置
+│   ├── CollectorConfig.cs                  # 顶层配置（含 MqttConfig）
 │   ├── ModbusConfig.cs                     # Modbus 连接参数（含 ConnectTimeoutMs）
+│   ├── MqttConfig.cs                       # MQTT 输出通道配置（Broker/Topic/认证/重连）
 │   ├── RegisterGroupConfig.cs              # 寄存器组配置（含 TagScales）
 │   ├── RegisterType.cs                     # Holding/Input/Discrete/Coil 枚举
 │   └── CollectorConfigValidator.cs         # IValidateOptions 启动校验
@@ -225,15 +231,85 @@ src/AmGatewayCloud.Collector.Modbus/
 │   └── DataQuality.cs                      # Good/Bad/Unknown 枚举
 └── Output/
     ├── IDataOutput.cs                      # 输出抽象接口
-    └── ConsoleDataOutput.cs                # 阶段1控制台输出（带组名前缀）
+    ├── ConsoleDataOutput.cs                # 阶段1控制台输出（带组名前缀）
+    └── MqttOutput.cs                       # MQTT 输出通道（批量 JSON + 指数退避重连 + 懒连接）
 ```
 
 ---
 
-## 11. Spec 文件关系
+## 11. MQTT 输出通道（阶段1+ 新增）
+
+> 两个采集器均已实现 MQTT 输出通道，作为 Console 之外的第二输出，为后续边缘聚合网关（Edge Hub）对接做准备。
+
+### 11.1 设计要点
+
+| 特性 | 实现方式 |
+|------|---------|
+| **懒连接** | 首次 `WriteBatchAsync` 时自动连接，不阻塞启动 |
+| **指数退避重连** | 5s → 10s → 20s → 40s → 60s 上限，与 Modbus 重连策略一致 |
+| **断线数据静默丢弃** | 不阻塞采集主循环，边缘采集器核心原则："采集优先，输出其次" |
+| **批量 JSON 打包** | `WriteBatchAsync` 将整批 DataPoint 合并为一条 JSON 消息 |
+| **ClientId 拼接 DeviceId** | `AmGatewayCloud-Modbus-{DeviceId}`，避免多实例冲突 |
+| **Topic 格式** | `{TopicPrefix}/modbus/{DeviceId}`，如 `amgateway/modbus/simulator-001` |
+| **条件注册** | `Mqtt.Enabled=true` 时才注册 `MqttOutput` 到 DI |
+| **双输出并行** | `IEnumerable<IDataOutput>` 注入，Console + MQTT 同时输出 |
+
+### 11.2 MQTT 配置项
+
+| 配置键 | 默认值 | 说明 |
+|--------|--------|------|
+| `Mqtt:Enabled` | `false` | 是否启用 MQTT 输出 |
+| `Mqtt:Broker` | `localhost` | MQTT Broker 地址 |
+| `Mqtt:Port` | `1883` | Broker 端口 |
+| `Mqtt:TopicPrefix` | `amgateway` | Topic 前缀 |
+| `Mqtt:ClientId` | `AmGatewayCloud-Modbus` | 客户端标识（运行时拼接 DeviceId） |
+| `Mqtt:UseTls` | `false` | 是否启用 TLS |
+| `Mqtt:Username` | — | 认证用户名（可选） |
+| `Mqtt:Password` | — | 认证密码（可选） |
+| `Mqtt:ReconnectDelayMs` | `5000` | 重连基准间隔（毫秒） |
+| `Mqtt:MaxReconnectDelayMs` | `60000` | 指数退避上限（毫秒） |
+
+### 11.3 MQTT 输出 JSON 格式
+
+```json
+{
+  "deviceId": "simulator-001",
+  "timestamp": "2026-05-07T12:00:00Z",
+  "points": [
+    {
+      "tag": "temperature",
+      "value": 28.84,
+      "valueType": "float",
+      "quality": "Good",
+      "timestamp": "2026-05-07T12:00:00Z",
+      "groupName": "sensors"
+    }
+  ]
+}
+```
+
+### 11.4 运行验证
+
+- **Broker**: 本地 Mosquitto（`localhost:1883`）
+- **订阅命令**: `mosquitto_sub -h localhost -p 1883 -t "amgateway/#" -v`
+- **验证结果**: `amgateway/modbus/simulator-001` 主题持续收到 JSON 数据，Console 和 MQTT 双输出并行正常
+
+### 11.5 踩坑记录
+
+详见 `.errors/collector-modbus-issues.md`，核心问题：
+- MQTTnet 5.x 命名空间重组（所有类型在 `MQTTnet` 根命名空间）
+- `MqttFactory` → `MqttClientFactory` 工厂类更名
+- `WithTls()` → `WithTlsOptions()` TLS 配置 API 变更
+- `WithCleanSession` → `WithCleanStart` MQTT 5.0 术语更名
+- QoS 枚举迁移至 `MQTTnet.Protocol` 子命名空间
+
+---
+
+## 12. Spec 文件关系
 
 ```
 collector-modbus.md           ← 基础方案（架构/数据模型/配置/组件设计）
 collector-modbus-supplement.md ← 补充文档（边界条件/校验/增强/优化建议）
-collector-modbus-status.md   ← 本文件（实现状态/遗留项/测试/演进）
+collector-modbus-status.md    ← 本文件（实现状态/MQTT输出/遗留项/测试/演进）
+../errors/collector-modbus-issues.md ← 踩坑记录（MQTTnet 5.x API 不兼容等）
 ```

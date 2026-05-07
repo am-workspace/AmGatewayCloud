@@ -23,6 +23,14 @@ try
     builder.Services.AddSingleton<ModbusConnection>();
     builder.Services.AddSingleton<IDataOutput, ConsoleDataOutput>();
 
+    // MQTT output (conditional)
+    var mqttConfig = new MqttConfig();
+    builder.Configuration.GetSection("Collector:Mqtt").Bind(mqttConfig);
+    if (mqttConfig.Enabled)
+    {
+        builder.Services.AddSingleton<IDataOutput, MqttOutput>();
+    }
+
     // Background service
     builder.Services.AddHostedService<ModbusCollectorService>();
 

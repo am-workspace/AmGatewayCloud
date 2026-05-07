@@ -17,3 +17,8 @@ packages/
 ## OS
 Thumbs.db
 .DS_Store
+
+## Runtime logs
+*_output.txt
+*_error.txt
+*.log

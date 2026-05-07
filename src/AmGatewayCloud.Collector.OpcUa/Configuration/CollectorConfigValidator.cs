@@ -25,12 +25,42 @@ public class CollectorConfigValidator : IValidateOptions<CollectorConfig>
         // OpcUa config
         ValidateOpcUaConfig(config.OpcUa, errors);
 
+        // MQTT config (only when enabled)
+        if (config.Mqtt.Enabled)
+        {
+            ValidateMqttConfig(config.Mqtt, errors);
+        }
+
         // NodeGroups
         ValidateNodeGroups(config.NodeGroups, errors);
 
         return errors.Count > 0
             ? ValidateOptionsResult.Fail(errors)
             : ValidateOptionsResult.Success;
+    }
+
+    private static void ValidateMqttConfig(MqttConfig mqtt, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(mqtt.Broker))
+            errors.Add("Collector:Mqtt:Broker is required when MQTT is enabled");
+
+        if (mqtt.Port <= 0 || mqtt.Port > 65535)
+            errors.Add("Collector:Mqtt:Port must be between 1 and 65535");
+
+        if (mqtt.ReconnectDelayMs <= 0)
+            errors.Add("Collector:Mqtt:ReconnectDelayMs must be > 0");
+
+        if (mqtt.MaxReconnectDelayMs < mqtt.ReconnectDelayMs)
+            errors.Add("Collector:Mqtt:MaxReconnectDelayMs must be >= ReconnectDelayMs");
+
+        if (string.IsNullOrWhiteSpace(mqtt.ClientId))
+            errors.Add("Collector:Mqtt:ClientId is required when MQTT is enabled");
+
+        if (string.IsNullOrWhiteSpace(mqtt.TopicPrefix))
+            errors.Add("Collector:Mqtt:TopicPrefix is required when MQTT is enabled");
+
+        if (mqtt.UseTls && mqtt.Port == 1883)
+            errors.Add("Collector:Mqtt:Port 1883 is the default non-TLS port; when UseTls=true, typically port 8883 is expected");
     }
 
     /// <summary>

@@ -101,11 +101,29 @@ public class OpcUaSession : IDisposable
                     StorePath = Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                         "AmGatewayCloud", "OPC UA", "Trusted")
+                },
+                TrustedIssuerCertificates = new CertificateTrustList
+                {
+                    StoreType = CertificateStoreType.Directory,
+                    StorePath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "AmGatewayCloud", "OPC UA", "Issuers")
+                },
+                RejectedCertificateStore = new CertificateTrustList
+                {
+                    StoreType = CertificateStoreType.Directory,
+                    StorePath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "AmGatewayCloud", "OPC UA", "Rejected")
                 }
             },
             TransportQuotas = new TransportQuotas
             {
                 OperationTimeout = 15000
+            },
+            ClientConfiguration = new ClientConfiguration
+            {
+                DefaultSessionTimeout = _config.SessionTimeoutMs
             }
         };
 

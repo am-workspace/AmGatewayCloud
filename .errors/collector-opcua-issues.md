@@ -134,11 +134,65 @@ item.SamplingInterval = (int)node.SamplingIntervalMs;
 
 ---
 
+## 9. `SecurityConfiguration` 必须显式指定 `TrustedIssuerCertificates` 和 `RejectedCertificateStore`
+
+**现象**：运行时崩溃 — `TrustedIssuerCertificates StorePath must be specified. (BadConfigurationError)`
+
+**根因**：OPC UA .NET Standard SDK 1.5.x 的 `ApplicationConfiguration.ValidateAsync()` 强制校验 `SecurityConfiguration` 的所有证书存储路径。旧版本只需配 `ApplicationCertificate` 和 `TrustedPeerCertificates`，1.5.x 要求完整配置：
+
+```csharp
+SecurityConfiguration = new SecurityConfiguration
+{
+    ApplicationCertificate = ...,
+    TrustedPeerCertificates = ...,
+    TrustedIssuerCertificates = new CertificateTrustList  // ← 1.5.x 必须
+    {
+        StoreType = CertificateStoreType.Directory,
+        StorePath = Path.Combine(localAppData, "AmGatewayCloud", "OPC UA", "Issuers")
+    },
+    RejectedCertificateStore = new CertificateTrustList     // ← 1.5.x 必须
+    {
+        StoreType = CertificateStoreType.Directory,
+        StorePath = Path.Combine(localAppData, "AmGatewayCloud", "OPC UA", "Rejected")
+    }
+};
+```
+
+**修复**：补全 `TrustedIssuerCertificates` 和 `RejectedCertificateStore` 配置项，即使 `SecurityPolicy=None` 也必须指定。
+
+**教训**：SDK 1.5.x 的配置校验比旧版严格很多，不要假设可选字段真的可选。
+
+---
+
+## 10. `ApplicationConfiguration` 必须指定 `ClientConfiguration`
+
+**现象**：运行时崩溃 — `ClientConfiguration must be specified. (BadConfigurationError)`
+
+**根因**：在修复问题 #9 后再次触发。SDK 1.5.x 要求 `ApplicationConfiguration.ClientConfiguration` 不能为 null。旧版本此字段有默认值，1.5.x 取消了默认值。
+
+```csharp
+_appConfig = new ApplicationConfiguration
+{
+    // ...
+    ClientConfiguration = new ClientConfiguration   // ← 1.5.x 必须
+    {
+        DefaultSessionTimeout = _config.SessionTimeoutMs  // 注意：int 类型，不是 uint
+    }
+};
+```
+
+**修复**：显式添加 `ClientConfiguration` 并设置 `DefaultSessionTimeout`。注意该属性类型为 `int`，不能直接传 `(uint)` 强转。
+
+**教训**：SDK 1.5.x 的 `ApplicationConfiguration` 有多个必须字段，建议一次性全部配齐，而非逐个碰壁补全。
+
+---
+
 ## 通用经验
 
 | 问题类型 | 发生次数 | 建议 |
 |---------|---------|------|
 | SDK 1.5.x API 签名与旧教程不匹配 | 6 | 始终通过反射或编译验证 API，不要轻信网络示例 |
+| SDK 1.5.x 配置校验变严格（必须字段无默认值） | 2 | `ApplicationConfiguration` 所有必要字段一次性配齐，不要逐个碰壁补全 |
 | 命名空间冲突 | 2 | 优先使用完整限定名，避免 `using` 歧义 |
 | 过时 API 废弃 | 2 | 关注编译警告，优先使用 Async 版本 |
 | GitHub 源码路径变更 | 1 | 仓库结构可能重组，`raw` URL 路径需确认 |

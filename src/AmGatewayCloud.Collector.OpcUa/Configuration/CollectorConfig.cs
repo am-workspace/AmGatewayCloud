@@ -8,8 +8,17 @@ public class CollectorConfig
     /// <summary>多租户伏笔，阶段6启用</summary>
     public string? TenantId { get; set; }
 
+    /// <summary>工厂标识</summary>
+    public string FactoryId { get; set; } = "factory-001";
+
+    /// <summary>车间标识</summary>
+    public string WorkshopId { get; set; } = "workshop-001";
+
     /// <summary>OPC UA 连接配置</summary>
     public OpcUaConfig OpcUa { get; set; } = new();
+
+    /// <summary>MQTT 输出通道配置</summary>
+    public MqttConfig Mqtt { get; set; } = new();
 
     /// <summary>监控节点组列表</summary>
     public List<NodeGroupConfig> NodeGroups { get; set; } = [];

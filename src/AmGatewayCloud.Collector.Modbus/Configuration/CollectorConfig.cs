@@ -7,6 +7,10 @@ public class CollectorConfig
 {
     /// <summary>设备标识</summary>
     public string DeviceId { get; set; } = "device-001";
+    /// <summary>工厂标识</summary>
+    public string FactoryId { get; set; } = "factory-001";
+    /// <summary>车间标识</summary>
+    public string WorkshopId { get; set; } = "workshop-001";
     /// <summary>多租户标识（预留）</summary>
     public string? TenantId { get; set; }
     /// <summary>轮询间隔（毫秒）</summary>
@@ -15,4 +19,6 @@ public class CollectorConfig
     public ModbusConfig Modbus { get; set; } = new();
     /// <summary>寄存器组配置列表</summary>
     public List<RegisterGroupConfig> RegisterGroups { get; set; } = [];
+    /// <summary>MQTT 输出配置</summary>
+    public MqttConfig Mqtt { get; set; } = new();
 }
