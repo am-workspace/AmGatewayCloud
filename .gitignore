@@ -22,3 +22,4 @@ Thumbs.db
 *_output.txt
 *_error.txt
 *.log
+build_opcua.txt
