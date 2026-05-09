@@ -104,8 +104,8 @@ public class FactoryConsumer : BackgroundService
         };
         _channel.QueueDeclare(_queueName, durable: true, exclusive: false, autoDelete: false, arguments);
 
-        var consumer = new AsyncEventingBasicConsumer(_channel);
-        consumer.Received += async (_, ea) => await HandleMessageAsync(ea, ct);
+        var consumer = new EventingBasicConsumer(_channel);
+        consumer.Received += (_, ea) => _ = HandleMessageAsync(ea, ct);
 
         _channel.BasicConsume(_queueName, autoAck: false, consumer);
         _healthTracker.SetOnline(_factoryId);

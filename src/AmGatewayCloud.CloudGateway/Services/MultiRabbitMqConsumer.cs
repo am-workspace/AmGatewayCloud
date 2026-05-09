@@ -10,6 +10,7 @@ public class MultiRabbitMqConsumer : IHostedService
     private readonly ILogger<MultiRabbitMqConsumer> _logger;
     private readonly Dictionary<string, FactoryConsumer> _consumers = new();
     private readonly object _lock = new();
+    private CancellationToken _ct;
 
     public MultiRabbitMqConsumer(
         IFactoryRegistry registry,
@@ -23,6 +24,7 @@ public class MultiRabbitMqConsumer : IHostedService
 
     public Task StartAsync(CancellationToken ct)
     {
+        _ct = ct;
         _registry.FactoriesChanged += OnFactoriesChanged;
         SyncConsumers();
         return Task.CompletedTask;
@@ -86,6 +88,7 @@ public class MultiRabbitMqConsumer : IHostedService
 
                     var consumer = CreateConsumer(factory);
                     _consumers[factory.FactoryId] = consumer;
+                    _ = consumer.StartAsync(_ct);
                 }
             }
         }
