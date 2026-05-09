@@ -29,4 +29,8 @@ public class RegisterGroupConfig
     /// 优先级：TagScales[tag] > Scale > ScaleFactor。
     /// </summary>
     public Dictionary<string, double> TagScales { get; set; } = [];
+    /// <summary>组级死区百分比（0=使用全局 DeadbandPercent，>0 覆盖全局值）</summary>
+    public double DeadbandPercent { get; set; } = 0;
+    /// <summary>Per-tag 死区覆盖。优先级：TagDeadbands[tag] > DeadbandPercent > Collector.DeadbandPercent</summary>
+    public Dictionary<string, double> TagDeadbands { get; set; } = [];
 }

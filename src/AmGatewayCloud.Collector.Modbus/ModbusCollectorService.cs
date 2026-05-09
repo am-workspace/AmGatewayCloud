@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AmGatewayCloud.Collector.Modbus.Configuration;
 using AmGatewayCloud.Collector.Modbus.Models;
 using AmGatewayCloud.Collector.Modbus.Output;
@@ -12,6 +13,7 @@ public class ModbusCollectorService : BackgroundService
     private readonly CollectorConfig _config;
     private readonly IEnumerable<IDataOutput> _outputs;
     private readonly ILogger<ModbusCollectorService> _logger;
+    private readonly ConcurrentDictionary<string, double> _lastValues = new();
 
     public ModbusCollectorService(
         ModbusConnection connection,
@@ -95,8 +97,10 @@ public class ModbusCollectorService : BackgroundService
                 var holding = await _connection.ReadHoldingRegistersAsync(group.Start, (ushort)group.Count, ct);
                 for (int i = 0; i < group.Count; i++)
                 {
-                    var value = ApplyScale(holding[i], group, group.Tags[i]);
-                    points.Add(DataPoint.Good(_config.DeviceId, group.Tags[i], value, timestamp, _config.TenantId));
+                    var tag = group.Tags[i];
+                    var value = ApplyScale(holding[i], group, tag);
+                    if (PassesDeadband(tag, value, ResolveDeadband(group, tag)))
+                        points.Add(DataPoint.Good(_config.DeviceId, tag, value, timestamp, _config.TenantId));
                 }
                 break;
 
@@ -104,8 +108,10 @@ public class ModbusCollectorService : BackgroundService
                 var input = await _connection.ReadInputRegistersAsync(group.Start, (ushort)group.Count, ct);
                 for (int i = 0; i < group.Count; i++)
                 {
-                    var value = ApplyScale(input[i], group, group.Tags[i]);
-                    points.Add(DataPoint.Good(_config.DeviceId, group.Tags[i], value, timestamp, _config.TenantId));
+                    var tag = group.Tags[i];
+                    var value = ApplyScale(input[i], group, tag);
+                    if (PassesDeadband(tag, value, ResolveDeadband(group, tag)))
+                        points.Add(DataPoint.Good(_config.DeviceId, tag, value, timestamp, _config.TenantId));
                 }
                 break;
 
@@ -127,6 +133,33 @@ public class ModbusCollectorService : BackgroundService
         }
 
         return points;
+    }
+
+    /// <summary>
+    /// 死区检查：变化量低于 threshold 则跳过上报。
+    /// </summary>
+    private bool PassesDeadband(string tag, double newValue, double threshold)
+    {
+        if (threshold <= 0) return true;
+
+        if (_lastValues.TryGetValue(tag, out var lastValue))
+        {
+            var denominator = Math.Max(Math.Abs(lastValue), 0.001);
+            var changePercent = Math.Abs(newValue - lastValue) / denominator * 100;
+            if (changePercent < threshold)
+                return false;
+        }
+
+        _lastValues[tag] = newValue;
+        return true;
+    }
+
+    /// <summary>解析 per-tag 死区：TagDeadbands > group.DeadbandPercent > global DeadbandPercent</summary>
+    private double ResolveDeadband(RegisterGroupConfig group, string tag)
+    {
+        if (group.TagDeadbands.TryGetValue(tag, out var td) && td > 0) return td;
+        if (group.DeadbandPercent > 0) return group.DeadbandPercent;
+        return _config.DeadbandPercent;
     }
 
     private static double ApplyScale(ushort rawValue, RegisterGroupConfig group, string tag)

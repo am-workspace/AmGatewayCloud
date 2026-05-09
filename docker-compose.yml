@@ -1,22 +1,37 @@
 services:
-  timescaledb:
-    image: timescale/timescaledb:latest-pg17
-    container_name: amgw-tsdb
+  # ── MQTT Broker (EdgeGateway 采集入口) ──
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: amgw-mosquitto
     ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: amgateway_timeseries
+      - "1883:1883"
     volumes:
-      - tsdb-data:/var/lib/postgresql/data
-      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "hc", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── 本地时序库 (EdgeGateway 断网缓存) ──
+  influxdb:
+    image: influxdb:latest
+    container_name: amgw-influxdb
+    ports:
+      - "8086:8086"
+    entrypoint: ["/bin/sh", "/docker-entrypoint-initdb.d/entrypoint.sh"]
+    environment:
+      INFLUXD_HTTP_BIND_ADDRESS: ":8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - ./docker/influxdb/entrypoint.sh:/docker-entrypoint-initdb.d/entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
+  # ── 消息队列 (EdgeGateway → CloudGateway) ──
   rabbitmq:
     image: rabbitmq:latest
     container_name: amgw-rabbitmq
@@ -33,5 +48,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── 云端时序库 + 业务库 (CloudGateway 写入目标) ──
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    container_name: amgw-tsdb
+    ports:
+      - "5432:5432"
+    environment:
+      TZ: Asia/Shanghai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: amgateway_timeseries
+    volumes:
+      - tsdb-data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
+  influxdb-data:
   tsdb-data:

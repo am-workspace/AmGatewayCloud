@@ -1,0 +1,4 @@
+http-bind-address: ":8086"
+storage-engine-type: tsm1
+tls-cert: ""
+tls-key: ""

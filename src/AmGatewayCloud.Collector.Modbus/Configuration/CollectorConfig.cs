@@ -15,6 +15,8 @@ public class CollectorConfig
     public string? TenantId { get; set; }
     /// <summary>轮询间隔（毫秒）</summary>
     public int PollIntervalMs { get; set; } = 2000;
+    /// <summary>死区百分比（0=禁用）。值变化量超过此百分比才上报。例如 1.0 表示变化超过 1% 才发送。</summary>
+    public double DeadbandPercent { get; set; } = 0;
     /// <summary>Modbus 连接配置</summary>
     public ModbusConfig Modbus { get; set; } = new();
     /// <summary>寄存器组配置列表</summary>

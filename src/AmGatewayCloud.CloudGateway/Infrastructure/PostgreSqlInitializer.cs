@@ -61,7 +61,7 @@ public class PostgreSqlInitializer
         ");
 
         await conn.ExecuteAsync(@"
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_lookup
+            CREATE INDEX IF NOT EXISTS idx_devices_lookup
             ON devices (factory_id, workshop_id, id);
         ");
 

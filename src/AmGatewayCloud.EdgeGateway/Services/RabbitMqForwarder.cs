@@ -156,9 +156,21 @@ public sealed class RabbitMqForwarder : IAsyncDisposable
 
                 _channel.ExchangeDeclare(_config.Exchange, ExchangeType.Topic, durable: true);
 
-                _channel.QueueDeclare(_queueName, durable: true, exclusive: false, autoDelete: false);
+                // DLX 拓扑（与 CloudGateway 保持一致，避免 inequivalent arg 冲突）
+                var dlxExchange = $"dlx.{_queueName}";
+                var dlqName = $"dlq.{_queueName}";
+                _channel.ExchangeDeclare(dlxExchange, ExchangeType.Topic, durable: true);
+                _channel.QueueDeclare(dlqName, durable: true, exclusive: false, autoDelete: false);
+                _channel.QueueBind(dlqName, dlxExchange, routingKey: $"dlx.{_queueName}");
+
+                var dlxArgs = new Dictionary<string, object>
+                {
+                    ["x-dead-letter-exchange"] = dlxExchange,
+                    ["x-dead-letter-routing-key"] = $"dlx.{_queueName}"
+                };
+                _channel.QueueDeclare(_queueName, durable: true, exclusive: false, autoDelete: false, dlxArgs);
                 _channel.QueueBind(_queueName, _config.Exchange, routingKey: "#");
-                _logger.LogInformation("RabbitMQ queue declared: {QueueName} -> {Exchange} (#)", _queueName, _config.Exchange);
+                _logger.LogInformation("RabbitMQ queue declared: {QueueName} -> {Exchange} (#), DLX={DlxExchange}", _queueName, _config.Exchange, dlxExchange);
 
                 _isOnline = true;
                 _reconnectAttempt = 0;
