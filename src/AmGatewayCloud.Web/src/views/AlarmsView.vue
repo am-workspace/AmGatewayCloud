@@ -132,7 +132,7 @@ const columns = [
   { title: '级别', dataIndex: 'level', key: 'level', width: 90 },
   { title: '规则名称', dataIndex: 'ruleName', key: 'ruleName', ellipsis: true },
   { title: '设备', dataIndex: 'deviceId', key: 'deviceId', width: 120, ellipsis: true },
-  { title: '触发值', key: 'triggeredValue', width: 100 },
+  { title: '触发值', key: 'triggerValue', width: 100 },
   { title: '条件', key: 'condition', width: 130 },
   { title: '状态', dataIndex: 'status', key: 'status', width: 90 },
   { title: '触发时间', dataIndex: 'triggeredAt', key: 'triggeredAt', width: 160 },
@@ -263,16 +263,16 @@ onMounted(() => {
           </template>
 
           <!-- 触发值 -->
-          <template v-else-if="column.key === 'triggeredValue'">
+          <template v-else-if="column.key === 'triggerValue'">
             <span style="font-weight: 600; color: #ff4d4f">
-              {{ formatNumber(record.triggeredValue) }}
+              {{ formatNumber(record.triggerValue) }}
             </span>
           </template>
 
           <!-- 条件 -->
           <template v-else-if="column.key === 'condition'">
             <span class="condition-text">
-              {{ record.tag }} {{ record.operator }} {{ record.threshold }}
+              {{ [record.tag, record.operator, record.thresholdString ?? record.threshold].filter(Boolean).join(' ') }}
             </span>
           </template>
 

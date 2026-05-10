@@ -148,7 +148,7 @@ onMounted(() => {
             </DescriptionsItem>
             <DescriptionsItem label="触发值">
               <span style="font-weight: 600; color: #ff4d4f; font-size: 16px">
-                {{ formatNumber(alarm.triggeredValue) }}
+                {{ formatNumber(alarm.triggerValue) }}
               </span>
             </DescriptionsItem>
             <DescriptionsItem label="触发时间">
@@ -237,9 +237,10 @@ onMounted(() => {
         <Card title="恢复信息" :bordered="false" size="small" class="detail-card">
           <Descriptions :column="{ xs: 1, sm: 2 }" size="small">
             <DescriptionsItem label="恢复值">
-              <span v-if="alarm.clearedAt" class="mono-text">
-                —
+              <span v-if="alarm.clearValue != null" class="mono-text">
+                {{ formatNumber(alarm.clearValue) }}
               </span>
+              <span v-else-if="alarm.clearedAt" style="color: #bfbfbf">—</span>
               <span v-else style="color: #bfbfbf">条件恢复后自动填充</span>
             </DescriptionsItem>
             <DescriptionsItem label="恢复时间">

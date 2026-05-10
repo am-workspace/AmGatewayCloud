@@ -151,7 +151,7 @@ const columns = [
   },
   {
     title: '触发值',
-    key: 'triggeredValue',
+    key: 'triggerValue',
     width: 100,
   },
   {
@@ -293,16 +293,16 @@ onUnmounted(() => {
             </template>
 
             <!-- 触发值 -->
-            <template v-else-if="column.key === 'triggeredValue'">
+            <template v-else-if="column.key === 'triggerValue'">
               <span style="font-weight: 600; color: #ff4d4f">
-                {{ formatNumber(record.triggeredValue) }}
+                {{ formatNumber(record.triggerValue) }}
               </span>
             </template>
 
             <!-- 条件 -->
             <template v-else-if="column.key === 'condition'">
               <span class="condition-text">
-                {{ record.tag }} {{ record.operator }} {{ record.threshold }}
+                {{ [record.tag, record.operator, record.thresholdString ?? record.threshold].filter(Boolean).join(' ') }}
               </span>
             </template>
 

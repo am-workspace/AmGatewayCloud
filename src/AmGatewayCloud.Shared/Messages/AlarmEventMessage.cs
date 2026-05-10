@@ -13,6 +13,9 @@ public class AlarmEventMessage
     public string? WorkshopId { get; set; }
     public string DeviceId { get; set; } = string.Empty;
     public string Tag { get; set; } = string.Empty;
+    public string Operator { get; set; } = ">";
+    public double Threshold { get; set; }
+    public string? ThresholdString { get; set; }
     public double? TriggerValue { get; set; }
     public string Level { get; set; } = "Warning";
     public string Status { get; set; } = "Active";
@@ -21,6 +24,7 @@ public class AlarmEventMessage
     public DateTimeOffset TriggeredAt { get; set; }
     public DateTimeOffset? SuppressedAt { get; set; }
     public string? SuppressedBy { get; set; }
+    public string? SuppressedReason { get; set; }
     public DateTimeOffset? ClearedAt { get; set; }
     public double? ClearValue { get; set; }
 }

@@ -8,6 +8,28 @@
       </a-button>
     </div>
 
+    <!-- 过滤栏 -->
+    <div class="rules-filter">
+      <a-select
+        v-model:value="filterFactoryId"
+        placeholder="全部工厂"
+        allow-clear
+        style="width: 180px"
+        @change="handleFilterChange"
+      >
+        <a-select-option v-for="f in appStore.factoryTree" :key="f.id" :value="f.id">
+          {{ f.name }}
+        </a-select-option>
+      </a-select>
+      <a-input
+        v-model:value="filterTag"
+        placeholder="按测点Tag过滤"
+        allow-clear
+        style="width: 180px"
+        @change="handleFilterChange"
+      />
+    </div>
+
     <a-table
       :columns="columns"
       :data-source="rules"
@@ -33,7 +55,7 @@
         <template v-else-if="column.key === 'threshold'">
           <span class="threshold-cell">
             <span class="operator">{{ record.operator }}</span>
-            <span>{{ record.stringThreshold ?? record.threshold }}</span>
+            <span>{{ record.thresholdString ?? record.threshold }}</span>
           </span>
         </template>
         <template v-else-if="column.key === 'factory'">
@@ -65,14 +87,20 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import * as rulesApi from '@/api/rules'
+import { useAppStore } from '@/stores/app'
 import { ALARM_LEVEL_TAG_COLOR } from '@/utils/constants'
 import type { AlarmRule, AlarmLevel } from '@/types'
 
 const router = useRouter()
+const appStore = useAppStore()
 
 const rules = ref<AlarmRule[]>([])
 const loading = ref(false)
 const toggleLoading = ref<string | null>(null)
+
+// 过滤条件
+const filterFactoryId = ref<string | undefined>(undefined)
+const filterTag = ref<string | undefined>(undefined)
 
 const columns = [
   { title: '规则ID', dataIndex: 'id', key: 'id', width: 160, ellipsis: true },
@@ -80,7 +108,7 @@ const columns = [
   { title: '测点', dataIndex: 'tag', key: 'tag', width: 120 },
   { title: '条件', dataIndex: 'threshold', key: 'threshold', width: 120 },
   { title: '级别', dataIndex: 'level', key: 'level', width: 90 },
-  { title: '冷却(秒)', dataIndex: 'cooldownSeconds', key: 'cooldownSeconds', width: 90 },
+  { title: '冷却(分钟)', dataIndex: 'cooldownMinutes', key: 'cooldownMinutes', width: 100 },
   { title: '状态', dataIndex: 'enabled', key: 'enabled', width: 100 },
   { title: '操作', key: 'actions', width: 130, fixed: 'right' as const },
 ]
@@ -98,13 +126,20 @@ function getRowClassName(record: AlarmRule) {
 async function fetchRules() {
   loading.value = true
   try {
-    const { data } = await rulesApi.getRules()
+    const params: { factoryId?: string; tag?: string } = {}
+    if (filterFactoryId.value) params.factoryId = filterFactoryId.value
+    if (filterTag.value) params.tag = filterTag.value
+    const { data } = await rulesApi.getRules(params)
     rules.value = data
   } catch {
-    message.error('加载规则列表失败')
+    // 错误已由全局拦截器提示
   } finally {
     loading.value = false
   }
+}
+
+function handleFilterChange() {
+  fetchRules()
 }
 
 async function handleToggle(record: AlarmRule, enabled: boolean) {
@@ -114,7 +149,7 @@ async function handleToggle(record: AlarmRule, enabled: boolean) {
     Object.assign(record, data)
     message.success(enabled ? '规则已启用' : '规则已停用')
   } catch {
-    message.error('操作失败')
+    // 错误已由全局拦截器提示
   } finally {
     toggleLoading.value = null
   }
@@ -125,9 +160,8 @@ async function handleDelete(record: AlarmRule) {
     await rulesApi.deleteRule(record.id)
     rules.value = rules.value.filter((r) => r.id !== record.id)
     message.success('规则已删除')
-  } catch (err: any) {
-    const msg = err?.response?.data ?? '删除失败'
-    message.error(typeof msg === 'string' ? msg : '删除失败')
+  } catch {
+    // 错误已由全局拦截器提示
   }
 }
 
@@ -152,6 +186,12 @@ onMounted(fetchRules)
   font-weight: 600;
 }
 
+.rules-filter {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .threshold-cell {
   font-family: 'Consolas', 'Monaco', monospace;
 }
@@ -161,7 +201,7 @@ onMounted(fetchRules)
   color: #999;
 }
 
-:deep(.rule-row-disabled) {
+::deep(.rule-row-disabled) {
   opacity: 0.55;
 }
 </style>

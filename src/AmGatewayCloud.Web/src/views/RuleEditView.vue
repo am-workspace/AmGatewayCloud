@@ -63,8 +63,8 @@
         </a-form-item>
 
         <!-- 字符串阈值 -->
-        <a-form-item v-if="form.operator === '=='" label="字符串阈值" name="stringThreshold">
-          <a-input v-model:value="form.stringThreshold" placeholder="字符串匹配值" />
+        <a-form-item v-if="form.operator === '=='" label="字符串阈值" name="thresholdString">
+          <a-input v-model:value="form.thresholdString" placeholder="字符串匹配值" />
         </a-form-item>
 
         <!-- 恢复阈值 -->
@@ -80,10 +80,10 @@
           <a-input-group compact>
             <a-select v-model:value="form.level" style="width: 140px" :options="ALARM_LEVEL_OPTIONS" />
             <a-input-number
-              v-model:value="form.cooldownSeconds"
+              v-model:value="form.cooldownMinutes"
               style="width: 160px"
               :min="0"
-              addon-after="秒"
+              addon-after="分钟"
               placeholder="冷却时间"
             />
           </a-input-group>
@@ -149,10 +149,10 @@ const form = reactive<CreateAlarmRuleRequest & { deviceId: string | null }>({
   operator: '>',
   threshold: 0,
   clearThreshold: null,
-  stringThreshold: null,
+  thresholdString: null,
   level: 'Warning' as AlarmLevel,
   delaySeconds: 0,
-  cooldownSeconds: 300,
+  cooldownMinutes: 5,
   description: '',
   enabled: true,
 })
@@ -196,15 +196,15 @@ async function loadRule() {
       operator: data.operator,
       threshold: data.threshold,
       clearThreshold: data.clearThreshold,
-      stringThreshold: data.stringThreshold,
+      thresholdString: data.thresholdString,
       level: data.level,
       delaySeconds: data.delaySeconds,
-      cooldownSeconds: data.cooldownSeconds,
+      cooldownMinutes: data.cooldownMinutes,
       description: data.description,
       enabled: data.enabled,
     })
   } catch {
-    message.error('加载规则失败')
+    // 错误已由全局拦截器提示
   } finally {
     pageLoading.value = false
   }
@@ -237,19 +237,18 @@ async function handleSubmit() {
         operator: form.operator,
         threshold: form.threshold,
         clearThreshold: form.clearThreshold,
-        stringThreshold: form.stringThreshold,
+        thresholdString: form.thresholdString,
         level: form.level,
         delaySeconds: form.delaySeconds,
-        cooldownSeconds: form.cooldownSeconds,
+        cooldownMinutes: form.cooldownMinutes,
         description: form.description,
         enabled: form.enabled,
       })
       message.success('规则更新成功')
     }
     router.push('/rules')
-  } catch (err: any) {
-    const msg = err?.response?.data ?? '保存失败'
-    message.error(typeof msg === 'string' ? msg : '保存失败')
+  } catch {
+    // 错误已由全局拦截器提示
   } finally {
     submitting.value = false
   }

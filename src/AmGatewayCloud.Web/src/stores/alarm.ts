@@ -116,20 +116,34 @@ export const useAlarmStore = defineStore('alarm', () => {
     fetchSummary()
   }
 
-  /** 处理 SignalR 推送的报警事件 */
+  /** 处理 SignalR 推送的报警事件 — 按 status 分发 */
   function handleSignalREvent(msg: AlarmEventMessage) {
-    // 增加未读计数
-    unreadCount.value++
+    const status = msg.status
 
-    // 如果是当前列表可见的报警，更新列表
-    const existing = alarms.value.find((a) => a.id === msg.id)
-    if (existing) {
-      // 更新已有报警的状态
-      Object.assign(existing, msg)
-    } else if (msg.status === 'Active') {
-      // 新报警插入列表顶部
-      alarms.value.unshift(msg as AlarmEvent)
-      totalCount.value++
+    if (status === 'Active') {
+      // 新报警：未读计数 +1，插入列表顶部
+      unreadCount.value++
+
+      const existing = alarms.value.find((a) => a.id === msg.id)
+      if (!existing) {
+        alarms.value.unshift(msg as unknown as AlarmEvent)
+        totalCount.value++
+      }
+    } else {
+      // Cleared / Acked / Suppressed：静默更新列表中的已有项
+      const idx = alarms.value.findIndex((a) => a.id === msg.id)
+      if (idx !== -1) {
+        const old = alarms.value[idx]
+        alarms.value[idx] = {
+          ...old,
+          status: msg.status,
+          clearedAt: msg.clearedAt ?? old.clearedAt,
+          clearValue: msg.clearValue ?? old.clearValue,
+          suppressedAt: msg.suppressedAt ?? old.suppressedAt,
+          suppressedBy: msg.suppressedBy ?? old.suppressedBy,
+          suppressedReason: msg.suppressedReason ?? old.suppressedReason,
+        } as AlarmEvent
+      }
     }
 
     // 汇总可能变化，延迟刷新

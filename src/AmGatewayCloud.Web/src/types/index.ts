@@ -3,23 +3,24 @@ export interface AlarmEvent {
   id: string
   ruleId: string
   ruleName: string
+  tenantId: string
   factoryId: string
   workshopId: string
   deviceId: string
   tag: string
-  operator: string
-  threshold: number
-  triggeredValue: number
+  triggerValue: number | null
   level: AlarmLevel
   status: AlarmStatus
   message: string
   isStale: boolean
+  staleAt: string | null
   acknowledgedBy: string | null
   acknowledgedAt: string | null
   suppressedBy: string | null
   suppressedReason: string | null
   suppressedAt: string | null
   clearedAt: string | null
+  clearValue: number | null
   triggeredAt: string
 }
 
@@ -27,18 +28,21 @@ export interface AlarmEvent {
 export interface AlarmRule {
   id: string
   name: string
+  tenantId: string
   factoryId: string
   deviceId: string | null
   tag: string
   operator: string
   threshold: number
   clearThreshold: number | null
-  stringThreshold: string | null
+  thresholdString: string | null
   level: AlarmLevel
   delaySeconds: number
-  cooldownSeconds: number
+  cooldownMinutes: number
   description: string
   enabled: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 // 报警状态
@@ -86,10 +90,10 @@ export interface CreateAlarmRuleRequest {
   operator: string
   threshold: number
   clearThreshold?: number | null
-  stringThreshold?: string | null
+  thresholdString?: string | null
   level: AlarmLevel
   delaySeconds: number
-  cooldownSeconds: number
+  cooldownMinutes: number
   description: string
   enabled: boolean
 }
@@ -103,10 +107,10 @@ export interface UpdateAlarmRuleRequest {
   operator?: string
   threshold?: number
   clearThreshold?: number | null
-  stringThreshold?: string | null
+  thresholdString?: string | null
   level?: AlarmLevel
   delaySeconds?: number
-  cooldownSeconds?: number
+  cooldownMinutes?: number
   description?: string
   enabled?: boolean
 }
@@ -136,16 +140,23 @@ export interface AlarmEventMessage {
   id: string
   ruleId: string
   ruleName: string
+  tenantId: string
   factoryId: string
   workshopId: string
   deviceId: string
   tag: string
   operator: string
   threshold: number
-  triggeredValue: number
+  thresholdString: string | null
+  triggerValue: number | null
   level: AlarmLevel
   status: AlarmStatus
   message: string
   isStale: boolean
   triggeredAt: string
+  suppressedAt: string | null
+  suppressedBy: string | null
+  suppressedReason: string | null
+  clearedAt: string | null
+  clearValue: number | null
 }

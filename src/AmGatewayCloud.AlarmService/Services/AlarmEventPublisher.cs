@@ -14,7 +14,7 @@ public class AlarmEventPublisher
     private readonly RabbitMqConnectionManager _connectionManager;
     private readonly ILogger<AlarmEventPublisher> _logger;
 
-    private readonly ConcurrentDictionary<string, string> _ruleNameCache = new();
+    private readonly ConcurrentDictionary<string, AlarmRule> _ruleCache = new();
 
     public AlarmEventPublisher(
         RabbitMqConnectionManager connectionManager,
@@ -26,13 +26,13 @@ public class AlarmEventPublisher
 
     public void UpdateRuleNameCache(IEnumerable<AlarmRule> rules)
     {
-        _ruleNameCache.Clear();
+        _ruleCache.Clear();
         foreach (var rule in rules)
-            _ruleNameCache[rule.Id] = rule.Name;
+            _ruleCache[rule.Id] = rule;
     }
 
     public string? GetRuleName(string ruleId)
-        => _ruleNameCache.GetValueOrDefault(ruleId);
+        => _ruleCache.GetValueOrDefault(ruleId)?.Name;
 
     public async Task PublishAsync(AlarmEvent alarmEvent, string exchange, CancellationToken ct)
     {
@@ -40,16 +40,20 @@ public class AlarmEventPublisher
         {
             var channel = await _connectionManager.GetChannelAsync(ct);
 
+            var rule = _ruleCache.GetValueOrDefault(alarmEvent.RuleId);
             var message = new AlarmEventMessage
             {
                 Id = alarmEvent.Id,
                 RuleId = alarmEvent.RuleId,
-                RuleName = _ruleNameCache.GetValueOrDefault(alarmEvent.RuleId, alarmEvent.RuleId),
+                RuleName = rule?.Name ?? alarmEvent.RuleId,
                 TenantId = alarmEvent.TenantId,
                 FactoryId = alarmEvent.FactoryId,
                 WorkshopId = alarmEvent.WorkshopId,
                 DeviceId = alarmEvent.DeviceId,
                 Tag = alarmEvent.Tag,
+                Operator = rule?.Operator ?? ">",
+                Threshold = rule?.Threshold ?? 0,
+                ThresholdString = rule?.ThresholdString,
                 TriggerValue = alarmEvent.TriggerValue,
                 Level = alarmEvent.Level,
                 Status = alarmEvent.Status.ToString(),
@@ -58,6 +62,7 @@ public class AlarmEventPublisher
                 TriggeredAt = alarmEvent.TriggeredAt,
                 SuppressedAt = alarmEvent.SuppressedAt,
                 SuppressedBy = alarmEvent.SuppressedBy,
+                SuppressedReason = alarmEvent.SuppressedReason,
                 ClearedAt = alarmEvent.ClearedAt,
                 ClearValue = alarmEvent.ClearValue
             };
