@@ -140,40 +140,147 @@ MQTT Subscribe (amgateway/#)
 
 ---
 
-## 阶段 4：报警服务 — 业务逻辑的起点
+## 阶段 4：报警服务 — 业务逻辑的起点 ✅
 
-**目标**：消费云端时序数据，温度超限时生成报警，存入 PostgreSQL，SignalR 推送到网页。
+**目标**：定时拉取 TimescaleDB 数据评估报警规则，生成报警事件，通过 RabbitMQ + SignalR 实时推送，提供 HTTP API 查询/管理。
 
-**新增技术**：SignalR、简单前端页面
+**新增技术**：SignalR、RabbitMQ（/business vhost）、YARP 反向代理、Dapper + Npgsql
 
 **产出**：
-- `AmGatewayCloud.AlarmService` — 报警微服务
-  - 消费云端数据流（从时序库或 RabbitMQ 二次消费）
-  - 阈值判断 → 生成 Alarm 记录 → 写入 PostgreSQL
-  - SignalR Hub 推送实时报警
-- `AmGatewayCloud.Web` — 简单报警看板页面
+- `AmGatewayCloud.AlarmService` — 报警业务微服务（WebApplication）
+  - 定时拉取 TimescaleDB 最新数据点（DISTINCT ON 去重）
+  - 规则评估引擎：数值/字符串阈值比较 + Deadband 自动恢复 + 冷却防抖
+  - 报警生命周期：Active → Acked → Suppressed → Cleared
+  - 报警事件持久化到 PostgreSQL（唯一索引防并发重复触发）
+  - RabbitMQ /business vhost 发布报警事件
+  - HTTP API：报警查询/确认/抑制/关闭、规则 CRUD（含 Operator/Level/ClearThreshold 校验）
+  - 设备离线检测（is_stale 标记）
+  - 16 条默认规则种子数据
+  - 健康检查端点（/health）
+- `AmGatewayCloud.WebApi` — 纯 BFF（Backend for Frontend）
+  - YARP 反向代理：/api/alarms/*、/api/alarmrules/* → AlarmService
+  - SignalR Hub：订阅 RabbitMQ 报警事件，按工厂分组推送前端
+  - 零数据库访问、零业务逻辑
+- `AmGatewayCloud.Shared` — 共享契约库
+  - DTOs、常量（ValidOperators/ValidLevels）、MQ 消息定义、配置模型
 
 **领域模型**：
-- `Equipment` — 设备（Id, Name, FactoryId, WorkshopId, TenantId）
-- `Alarm` — 报警（Id, EquipmentId, Level, Message, Timestamp, TenantId）
+- `AlarmRule` — 报警规则（Id, Tag, Operator, Threshold, ThresholdString, ClearThreshold, Level, CooldownMinutes, 三级作用域）
+- `AlarmEvent` — 报警事件（RuleId, DeviceId, Level, Status, IsStale, TriggerValue, ClearValue）
+- `AlarmStatus` — 状态枚举（Active/Acked/Suppressed/Cleared）
+- `DataPointReadModel` — 时序数据读取模型
+- `AlarmEventMessage` — RabbitMQ 消息契约
 
-**验证标准**：温度超限 → 网页实时弹出报警通知 → PostgreSQL 中可查报警记录
+**部署**：
+- Docker 多阶段构建（AlarmService + WebApi）
+- docker-compose 编排（3 新服务 + RabbitMQ /business vhost 初始化）
+- 统一 ASPNETCORE_ENVIRONMENT 环境变量
+- Serilog 结构化日志
+
+**验证标准**：
+- 数据点超限 → 规则评估触发报警 → PostgreSQL 写入 + RabbitMQ 发布
+- WebApi 订阅 RabbitMQ → SignalR 按工厂分组推送
+- 前端 REST 请求 → WebApi YARP → AlarmService HTTP API → 返回结果
+- 设备离线 → 报警标记 is_stale
+- 条件恢复 → 报警自动 Cleared
 
 ---
 
-## 阶段 5：DDD 提炼 + 维修工单
+## 阶段 5：前端看板 — 报警可视化
 
-**目标**：报警出现后，自动/手动生成维修工单。用 DDD 思想提炼领域模型，EF Core 实现仓储。
+**目标**：构建 Vue 3 前端，实时展示报警和设备状态，验证 API + SignalR 链路是否通畅。
 
-**新增技术**：EF Core
+**新增技术**：Vue 3 + Vite、Pinia、Ant Design Vue、vue-echarts、@microsoft/signalr
+
+**产出**：
+- `AmGatewayCloud.Web` — Vue 3 + Vite 前端项目
+  - 报警实时看板：SignalR 订阅 → 新报警弹窗 + 列表实时刷新
+  - 报警管理页：分页查询、确认、抑制、关闭操作
+  - 规则管理页：规则 CRUD、启停切换
+  - 设备状态看板：在线/离线、is_stale 标记、ECharts 设备概览图表
+  - 工厂/车间树形导航：SignalR JoinFactory/LeaveFactory 分组
+  - Pinia 状态管理 + REST API 对接 WebApi BFF
+  - Ant Design Vue 组件库 + vue-echarts 图表
+- Docker 多阶段构建（nginx 托管 SPA）
+- docker-compose 新增 `web` 服务，CORS 配置更新
+
+**数据流**：
+```
+Vue (Pinia) ──REST──► WebApi (BFF) ──YARP──► AlarmService
+     │
+     └──SignalR──► WebApi Hub ──► 按工厂分组推送实时报警
+```
+
+**前端技术栈**：
+| 分类 | 选型 | 说明 |
+|------|------|------|
+| 框架 | Vue 3 + Vite | Composition API + `<script setup>` |
+| 状态管理 | Pinia | 轻量、TS 友好 |
+| UI 组件库 | Ant Design Vue 4.x | 企业级组件，表格/表单/布局完善 |
+| 图表 | vue-echarts + echarts | ECharts 的 Vue 封装，声明式 + 自动 resize |
+| 实时通信 | @microsoft/signalr | 自动重连 + 工厂分组 |
+| HTTP 客户端 | axios | REST API 调用 |
+| 路由 | Vue Router 4 | 工厂/车间上下文路由 |
+
+**验证标准**：
+- 打开前端 → 实时弹出报警通知
+- 报警列表可按工厂/状态/级别过滤
+- 确认/抑制/关闭操作实时生效
+- 规则创建/编辑/删除即时反映
+- 设备状态图表正常渲染、实时更新
+- Docker 部署后前端可正常访问后端 API
+
+---
+
+## 阶段 6：DDD 提炼 + 维修工单
+
+**目标**：用 DDD 思想提炼领域模型，从 AlarmService 抽取领域层；引入工单系统，实现报警→工单自动联动。
+
+**新增技术**：EF Core、MediatR（领域事件）、领域事件机制
+
+### 6.1 DDD 提炼
 
 **产出**：
 - `AmGatewayCloud.Domain` — 领域层
-  - 聚合根：`Equipment`、`Alarm`、`WorkOrder`
-  - 值对象：`AlarmLevel`、`WorkOrderStatus`
-  - 领域事件：`AlarmTriggeredEvent` → 自动创建工单
-- `AmGatewayCloud.Infrastructure` — EF Core 仓储实现
-- 工单管理 API + 网页
+  - 聚合根：`Equipment`、`Alarm`（从阶段4 AlarmEvent/AlarmRule 提炼）
+  - 值对象：`AlarmLevel`、`AlarmStatus`、`OperatorType`
+  - 领域事件：`AlarmTriggeredEvent`、`AlarmClearedEvent`
+  - 领域服务：规则评估逻辑从 AlarmService 迁入
+- `AmGatewayCloud.Infrastructure` — 基础设施层
+  - EF Core DbContext + 仓储实现
+  - 数据库迁移（从 init-db.sql → EF Core Migration）
+  - MediatR 领域事件发布
+- AlarmService 重构：引用 Domain + Infrastructure，业务逻辑委托给聚合根
+
+**重构策略**：
+```
+重构前（阶段4）：
+AlarmService → Dapper → PostgreSQL（直接 SQL）
+
+重构后（阶段6）：
+AlarmService → Domain（聚合根 + 领域服务）
+                  ↓
+            Infrastructure（EF Core 仓储）
+                  ↓
+            PostgreSQL
+```
+
+**验证标准**：
+- 重构后 AlarmService 所有 API 行为不变
+- EF Core Migration 可从空库重建完整 schema
+- 领域事件（AlarmTriggered/Cleared）通过 MediatR 正确发布
+
+### 6.2 维修工单系统
+
+**产出**：
+- `WorkOrder` 聚合根（Domain 层）
+  - Id, AlarmId, EquipmentId, Status, Assignee, CreatedAt, TenantId
+  - Status: Pending → InProgress → Completed
+- 领域事件联动：`AlarmTriggeredEvent` → 自动创建工单
+- AlarmService 新增工单管理 API：创建、查询、分配、完成
+- WebApi 新增 YARP 代理路由：`/api/workorders/*`
+- 前端工单页：工单列表、详情、分配、完成操作
+- AlarmRule 热更新：WebApi 修改规则后通过 RabbitMQ 即时通知 AlarmService
 
 **领域模型（提炼后）**：
 ```
@@ -182,7 +289,7 @@ Equipment (聚合根)
 └── Alarms (集合)
 
 Alarm (聚合根)
-├── Id, EquipmentId, Level, Message, Timestamp, IsAcknowledged, TenantId
+├── Id, EquipmentId, Level, Status, Message, Timestamp, TenantId
 └── WorkOrders (集合)
 
 WorkOrder (聚合根)
@@ -190,11 +297,14 @@ WorkOrder (聚合根)
 └── Status: Pending → InProgress → Completed
 ```
 
-**验证标准**：报警触发 → 自动生成工单 → 网页上可查看/处理工单
+**验证标准**：
+- 报警触发 → 自动生成工单 → 前端工单页可查看/处理
+- 工单状态流转正确（Pending → InProgress → Completed）
+- 工单按 TenantId 隔离
 
 ---
 
-## 阶段 6：容器化 + 可观测性
+## 阶段 7：容器化 + 可观测性
 
 **目标**：全栈 Docker Compose 编排 + 结构化日志 + 分布式追踪。
 
@@ -208,8 +318,7 @@ WorkOrder (聚合根)
   - AmGatewayCloud.EdgeGateway + InfluxDB + Grafana（边缘侧）
   - RabbitMQ（工厂级）
   - AmGatewayCloud.CloudGateway + PostgreSQL + 云时序库（云端）
-  - AmGatewayCloud.AlarmService
-  - AmGatewayCloud.Web
+  - AmGatewayCloud.AlarmService + WebApi + Shared
   - Seq（日志）
   - Jaeger（追踪）
 - Serilog 结构化日志 → Seq
@@ -222,7 +331,7 @@ WorkOrder (聚合根)
 
 ---
 
-## 阶段 7：多租户完善
+## 阶段 8：多租户完善
 
 **目标**：平台卖给多个公司，不同公司登录只看到自己的工厂、设备和报警。
 
@@ -258,8 +367,13 @@ WorkOrder (聚合根)
 | 工厂消息队列 | RabbitMQ (一厂一个) |
 | 云端时序库 | InfluxDB 2.x / TimescaleDB |
 | 关系数据库 | PostgreSQL |
-| ORM | EF Core |
+| ORM | Dapper（阶段4）、EF Core（阶段6+） |
 | 实时通信 | SignalR |
+| BFF 网关 | YARP 反向代理 |
+| 前端 | Vue 3 + Vite + Pinia（阶段5） |
+| 前端 UI | Ant Design Vue 4.x（阶段5） |
+| 前端图表 | vue-echarts + echarts（阶段5） |
+| 领域事件 | MediatR（阶段6+） |
 | 缓存/共享状态 | Redis（阶段 6+ 引入） |
 | 容器化 | Docker + Docker Compose |
 | 日志 | Serilog → Seq |
@@ -285,9 +399,11 @@ WorkOrder (聚合根)
 | AmGatewayCloud.Collector.OpcUa | 1 | OPC UA 采集器 + MQTT 推送 |
 | AmGatewayCloud.EdgeGateway | 2 | 边缘聚合：MQTT订阅 → InfluxDB + RabbitMQ |
 | AmGatewayCloud.CloudGateway | 3 | 云端聚合：多RabbitMQ消费 → PostgreSQL + 时序库 |
-| AmGatewayCloud.AlarmService | 4 | 报警微服务 |
-| AmGatewayCloud.Web | 4 | 报警看板 + 工单管理 |
-| AmGatewayCloud.Domain | 5 | 领域层 |
-| AmGatewayCloud.Infrastructure | 5 | EF Core 仓储 |
+| AmGatewayCloud.AlarmService | 4 | 报警业务微服务（评估引擎 + HTTP API） |
+| AmGatewayCloud.WebApi | 4 | BFF（YARP 反向代理 + SignalR 推送） |
+| AmGatewayCloud.Shared | 4 | 共享契约库（DTOs + Constants + Messages + Config） |
+| AmGatewayCloud.Web | 5 | Vue 3 前端（报警看板 + 规则管理 + 设备状态） |
+| AmGatewayCloud.Domain | 6 | 领域层（聚合根 + 领域事件） |
+| AmGatewayCloud.Infrastructure | 6 | EF Core 仓储 |
 
 AmGatewayCloud 负责**边缘采集 → 边缘聚合 → 云端聚合 → 业务服务**全链路，通过 MQTT/RabbitMQ 逐级解耦，支持从单车间到多工厂的水平扩展。

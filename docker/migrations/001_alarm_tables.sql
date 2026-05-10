@@ -1,17 +1,7 @@
--- Create business database for factories/workshops/devices metadata
-CREATE DATABASE amgateway_business;
-
--- Create dedicated user for business database
-CREATE USER sa WITH PASSWORD 'sa';
-GRANT ALL PRIVILEGES ON DATABASE amgateway_business TO sa;
-
--- Grant schema-level permissions inside business database
-\c amgateway_business
-GRANT ALL ON SCHEMA public TO sa;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO sa;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO sa;
-
--- ── Alarm tables (Phase 4) ──
+-- ============================================================
+-- Migration: 在 amgateway_business 数据库中创建 alarm 表
+-- 由 TimescaleDB 容器初始化时执行 (via init-db.sql)
+-- ============================================================
 
 -- 1. 报警规则表
 CREATE TABLE IF NOT EXISTS alarm_rules (
@@ -70,9 +60,6 @@ CREATE INDEX IF NOT EXISTS idx_alarm_events_status
 CREATE INDEX IF NOT EXISTS idx_alarm_events_rule_device
     ON alarm_events (rule_id, device_id, status) WHERE status IN ('Active', 'Acked');
 
+-- 多实例安全：同一 (rule_id, device_id) 只允许一条 Active/Acked 报警
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alarm_events_active_unique
     ON alarm_events (rule_id, device_id) WHERE status IN ('Active', 'Acked');
-
--- Grant alarm tables to sa
-GRANT ALL ON TABLE alarm_rules TO sa;
-GRANT ALL ON TABLE alarm_events TO sa;

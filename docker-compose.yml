@@ -31,7 +31,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── 消息队列 (EdgeGateway → CloudGateway) ──
+  # ── 消息队列 (管道层 + 业务层) ──
   rabbitmq:
     image: rabbitmq:latest
     container_name: amgw-rabbitmq
@@ -41,12 +41,30 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-    command: ["sh", "-c", "rabbitmq-plugins enable --offline rabbitmq_management && exec rabbitmq-server"]
+    command: >
+      sh -c "rabbitmq-plugins enable --offline rabbitmq_management &&
+             exec rabbitmq-server"
+    volumes:
+      - ./docker/rabbitmq/init-business-vhost.sh:/init-vhost.sh:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # ── RabbitMQ 初始化：创建 /business vhost ──
+  rabbitmq-init:
+    image: rabbitmq:latest
+    container_name: amgw-rabbitmq-init
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["sh", "-c"]
+    command: >
+      "rabbitmqctl -n rabbit@amgw-rabbitmq add_vhost /business 2>/dev/null;
+       rabbitmqctl -n rabbit@amgw-rabbitmq set_permissions -p /business guest '.*' '.*' '.*';
+       echo '/business vhost initialized'"
 
   # ── 云端时序库 + 业务库 (CloudGateway 写入目标) ──
   timescaledb:
@@ -62,11 +80,78 @@ services:
     volumes:
       - tsdb-data:/var/lib/postgresql/data
       - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./docker/alarm-init.sql:/docker-entrypoint-initdb.d/02-alarm-init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # ── 报警评估服务 (Phase 4) ──
+  alarm-service:
+    build:
+      context: .
+      dockerfile: docker/alarm-service/Dockerfile
+    container_name: amgw-alarm-service
+    ports:
+      - "5001:5001"
+    depends_on:
+      rabbitmq-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      AlarmService__TenantId: default
+      AlarmService__EvaluationIntervalSeconds: "5"
+      AlarmService__EvaluationLookbackSeconds: "30"
+      AlarmService__MaxConsecutiveErrors: "10"
+      AlarmService__RuleCacheRefreshSeconds: "30"
+      AlarmService__MaxQueryWindowHours: "1"
+      AlarmService__DeviceOfflineThresholdMinutes: "10"
+      AlarmService__TimescaleDb__Host: timescaledb
+      AlarmService__TimescaleDb__Port: "5432"
+      AlarmService__TimescaleDb__Database: amgateway_timeseries
+      AlarmService__TimescaleDb__Username: postgres
+      AlarmService__TimescaleDb__Password: postgres
+      AlarmService__PostgreSql__Host: timescaledb
+      AlarmService__PostgreSql__Port: "5432"
+      AlarmService__PostgreSql__Database: amgateway_business
+      AlarmService__PostgreSql__Username: sa
+      AlarmService__PostgreSql__Password: sa
+      AlarmService__RabbitMq__HostName: rabbitmq
+      AlarmService__RabbitMq__Port: "5672"
+      AlarmService__RabbitMq__VirtualHost: /business
+      AlarmService__RabbitMq__Username: guest
+      AlarmService__RabbitMq__Password: guest
+      AlarmService__RabbitMq__Exchange: amgateway.alarms
+    restart: unless-stopped
+
+  # ── 报警 WebApi / BFF (Phase 4) ──
+  webapi:
+    build:
+      context: .
+      dockerfile: docker/webapi/Dockerfile
+    container_name: amgw-webapi
+    ports:
+      - "8080:8080"
+    depends_on:
+      alarm-service:
+        condition: service_started
+      rabbitmq-init:
+        condition: service_completed_successfully
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      WebApi__CorsOrigins__0: "http://localhost:5173"
+      WebApi__RabbitMq__HostName: rabbitmq
+      WebApi__RabbitMq__Port: "5672"
+      WebApi__RabbitMq__VirtualHost: /business
+      WebApi__RabbitMq__Username: guest
+      WebApi__RabbitMq__Password: guest
+      WebApi__RabbitMq__Exchange: amgateway.alarms
+      WebApi__RabbitMq__QueueName: amgateway.alarm-notifications
+      ReverseProxy__Clusters__alarm-service__Destinations__default__Address: "http://alarm-service:5001"
+    restart: unless-stopped
 
 volumes:
   influxdb-data:

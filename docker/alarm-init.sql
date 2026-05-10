@@ -1,33 +1,23 @@
--- Create business database for factories/workshops/devices metadata
-CREATE DATABASE amgateway_business;
-
--- Create dedicated user for business database
-CREATE USER sa WITH PASSWORD 'sa';
-GRANT ALL PRIVILEGES ON DATABASE amgateway_business TO sa;
-
--- Grant schema-level permissions inside business database
-\c amgateway_business
-GRANT ALL ON SCHEMA public TO sa;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO sa;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO sa;
-
--- ── Alarm tables (Phase 4) ──
+-- ============================================================
+-- AmGatewayCloud AlarmService — alarm_rules & alarm_events
+-- 在 amgateway_business 数据库中执行
+-- ============================================================
 
 -- 1. 报警规则表
 CREATE TABLE IF NOT EXISTS alarm_rules (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL,
+    id              TEXT PRIMARY KEY,             -- 规则ID，如 "high-temp-critical"
+    name            TEXT NOT NULL,                -- 规则名称
     tenant_id       TEXT NOT NULL DEFAULT 'default',
-    factory_id      TEXT,
-    device_id       TEXT,
-    tag             TEXT NOT NULL,
-    operator        TEXT NOT NULL,
-    threshold       DOUBLE PRECISION NOT NULL,
-    threshold_string TEXT,
-    clear_threshold DOUBLE PRECISION,
-    level           TEXT NOT NULL DEFAULT 'Warning',
+    factory_id      TEXT,                         -- NULL = 全局（所有工厂）
+    device_id       TEXT,                         -- NULL = 同工厂所有设备
+    tag             TEXT NOT NULL,                -- 测点: "temperature"
+    operator        TEXT NOT NULL,                -- 运算符: >, >=, <, <=, ==, !=
+    threshold       DOUBLE PRECISION NOT NULL,    -- 触发阈值
+    threshold_string TEXT,                        -- 字符串阈值（如 "Bad"，用于 == / != 字符串比较）
+    clear_threshold DOUBLE PRECISION,             -- 恢复阈值(Deadband)
+    level           TEXT NOT NULL DEFAULT 'Warning',  -- Info/Warning/Critical/Fatal
     cooldown_minutes INT NOT NULL DEFAULT 5,
-    delay_seconds   INT NOT NULL DEFAULT 0,
+    delay_seconds   INT NOT NULL DEFAULT 0,       -- 延迟确认(预留)
     enabled         BOOLEAN NOT NULL DEFAULT TRUE,
     description     TEXT,
     created_at      TIMESTAMPTZ DEFAULT NOW(),
@@ -48,8 +38,8 @@ CREATE TABLE IF NOT EXISTS alarm_events (
     tag             TEXT NOT NULL,
     trigger_value   DOUBLE PRECISION,
     level           TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'Active',
-    is_stale        BOOLEAN NOT NULL DEFAULT FALSE,
+    status          TEXT NOT NULL DEFAULT 'Active', -- Active/Acked/Suppressed/Cleared
+    is_stale        BOOLEAN NOT NULL DEFAULT FALSE, -- 设备离线标记
     stale_at        TIMESTAMPTZ,
     message         TEXT,
     triggered_at    TIMESTAMPTZ NOT NULL,
@@ -70,9 +60,6 @@ CREATE INDEX IF NOT EXISTS idx_alarm_events_status
 CREATE INDEX IF NOT EXISTS idx_alarm_events_rule_device
     ON alarm_events (rule_id, device_id, status) WHERE status IN ('Active', 'Acked');
 
+-- 多实例安全：同一 (rule_id, device_id) 只允许一条 Active/Acked 报警
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alarm_events_active_unique
     ON alarm_events (rule_id, device_id) WHERE status IN ('Active', 'Acked');
-
--- Grant alarm tables to sa
-GRANT ALL ON TABLE alarm_rules TO sa;
-GRANT ALL ON TABLE alarm_events TO sa;
