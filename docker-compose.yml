@@ -143,6 +143,8 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       WebApi__CorsOrigins__0: "http://localhost:5173"
+      WebApi__CorsOrigins__1: "http://localhost"
+      WebApi__CorsOrigins__2: "http://amgw-web"
       WebApi__RabbitMq__HostName: rabbitmq
       WebApi__RabbitMq__Port: "5672"
       WebApi__RabbitMq__VirtualHost: /business
@@ -151,6 +153,19 @@ services:
       WebApi__RabbitMq__Exchange: amgateway.alarms
       WebApi__RabbitMq__QueueName: amgateway.alarm-notifications
       ReverseProxy__Clusters__alarm-service__Destinations__default__Address: "http://alarm-service:5001"
+    restart: unless-stopped
+
+  # ── 前端看板 (Phase 5) ──
+  web:
+    build:
+      context: .
+      dockerfile: docker/web/Dockerfile
+    container_name: amgw-web
+    ports:
+      - "80:80"
+    depends_on:
+      webapi:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

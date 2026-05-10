@@ -1,0 +1,33 @@
+{
+  "name": "amgatewaycloud-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ant-design/icons-vue": "^7.0.1",
+    "@microsoft/signalr": "^8.0.17",
+    "ant-design-vue": "^4.2.6",
+    "axios": "^1.16.0",
+    "dayjs": "^1.11.20",
+    "echarts": "^5.6.0",
+    "pinia": "^2.3.1",
+    "vue": "^3.5.32",
+    "vue-echarts": "^7.0.3",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "@vitejs/plugin-vue": "^6.0.6",
+    "@vue/tsconfig": "^0.9.1",
+    "typescript": "~6.0.2",
+    "unplugin-auto-import": "^21.0.0",
+    "unplugin-vue-components": "^32.0.0",
+    "vite": "^8.0.10",
+    "vue-tsc": "^3.2.7"
+  }
+}
