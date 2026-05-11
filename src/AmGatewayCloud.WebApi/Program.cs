@@ -1,5 +1,6 @@
 using System.Text;
 using AmGatewayCloud.Shared.Configuration;
+using AmGatewayCloud.Shared.Observability;
 using AmGatewayCloud.Shared.Tenant;
 using AmGatewayCloud.WebApi.Configuration;
 using AmGatewayCloud.WebApi.Hubs;
@@ -71,6 +72,9 @@ try
 
     // 租户上下文
     builder.Services.AddTenantContext();
+
+    // OpenTelemetry
+    builder.Services.AddAmGatewayOpenTelemetry(builder.Configuration);
 
     // YARP 反向代理 — 转发到 AlarmService / WorkOrderService + 透传 X-Tenant-Id
     builder.Services.AddReverseProxy()

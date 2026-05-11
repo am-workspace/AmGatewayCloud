@@ -3,6 +3,7 @@ using AmGatewayCloud.AlarmService.Infrastructure;
 using AmGatewayCloud.AlarmService.Services;
 using AmGatewayCloud.AlarmInfrastructure.Events;
 using AmGatewayCloud.AlarmInfrastructure.Persistence;
+using AmGatewayCloud.Shared.Observability;
 using AmGatewayCloud.Shared.Tenant;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -66,6 +67,9 @@ try
 
     // 租户上下文
     builder.Services.AddTenantContext();
+
+    // OpenTelemetry
+    builder.Services.AddAmGatewayOpenTelemetry(builder.Configuration);
 
     // Swagger
     builder.Services.AddEndpointsApiExplorer();

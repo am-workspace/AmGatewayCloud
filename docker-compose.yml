@@ -1,4 +1,28 @@
 services:
+  # ── 可观测性：日志 (Seq) + 追踪 (Jaeger + OTel Collector) ──
+  seq:
+    image: datalust/seq:latest
+    container_name: amgw-seq
+    ports:
+      - "5341:5341"   # Seq ingestion endpoint
+      - "8081:80"     # Seq web UI
+    environment:
+      ACCEPT_EULA: "Y"
+    volumes:
+      - seq-data:/data
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: amgw-jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    restart: unless-stopped
+
   # ── MQTT Broker (EdgeGateway 采集入口) ──
   mosquitto:
     image: eclipse-mosquitto:latest
@@ -100,6 +124,10 @@ services:
         condition: service_completed_successfully
       timescaledb:
         condition: service_healthy
+      seq:
+        condition: service_started
+      jaeger:
+        condition: service_started
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       AlarmService__TenantId: default
@@ -125,6 +153,11 @@ services:
       AlarmService__RabbitMq__Username: guest
       AlarmService__RabbitMq__Password: guest
       AlarmService__RabbitMq__Exchange: amgateway.alarms
+      OTEL__ServiceName: alarm-service
+      OTEL__OtlpEndpoint: http://jaeger:4317
+      Serilog__WriteTo__1__Name: Seq
+      Serilog__WriteTo__1__Args__serverUrl: http://seq:5341
+      Serilog__WriteTo__1__Args__apiKey: ""
     restart: unless-stopped
 
   # ── 报警 WebApi / BFF (Phase 4) ──
@@ -140,6 +173,10 @@ services:
         condition: service_started
       rabbitmq-init:
         condition: service_completed_successfully
+      seq:
+        condition: service_started
+      jaeger:
+        condition: service_started
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       WebApi__CorsOrigins__0: "http://localhost:5173"
@@ -154,6 +191,11 @@ services:
       WebApi__RabbitMq__QueueName: amgateway.alarm-notifications
       ReverseProxy__Clusters__alarm-service__Destinations__default__Address: "http://alarm-service:5001"
       ReverseProxy__Clusters__workorder-service__Destinations__default__Address: "http://workorder-service:5002"
+      OTEL__ServiceName: webapi
+      OTEL__OtlpEndpoint: http://jaeger:4317
+      Serilog__WriteTo__1__Name: Seq
+      Serilog__WriteTo__1__Args__serverUrl: http://seq:5341
+      Serilog__WriteTo__1__Args__apiKey: ""
     restart: unless-stopped
 
   # ── 维修工单服务 (Phase 6) ──
@@ -169,6 +211,10 @@ services:
         condition: service_completed_successfully
       timescaledb:
         condition: service_healthy
+      seq:
+        condition: service_started
+      jaeger:
+        condition: service_started
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       WorkOrderService__TenantId: default
@@ -185,6 +231,11 @@ services:
       WorkOrderService__RabbitMq__Password: guest
       WorkOrderService__RabbitMq__Exchange: amgateway.alarms
       WorkOrderService__RabbitMq__QueueName: amgateway.workorder.alarm-events
+      OTEL__ServiceName: workorder-service
+      OTEL__OtlpEndpoint: http://jaeger:4317
+      Serilog__WriteTo__1__Name: Seq
+      Serilog__WriteTo__1__Args__serverUrl: http://seq:5341
+      Serilog__WriteTo__1__Args__apiKey: ""
     restart: unless-stopped
 
   # ── 前端看板 (Phase 5) ──
@@ -203,3 +254,4 @@ services:
 volumes:
   influxdb-data:
   tsdb-data:
+  seq-data:

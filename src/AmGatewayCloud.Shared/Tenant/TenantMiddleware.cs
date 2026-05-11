@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Serilog.Context;
 
 namespace AmGatewayCloud.Shared.Tenant;
 
@@ -41,6 +42,10 @@ public class TenantMiddleware
         var tenantContext = new TenantContext(tenantId);
         context.Items["TenantContext"] = tenantContext;
 
-        await _next(context);
+        // 注入 Serilog LogContext，所有日志自动携带 TenantId
+        using (LogContext.PushProperty("TenantId", tenantId))
+        {
+            await _next(context);
+        }
     }
 }

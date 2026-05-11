@@ -1,6 +1,7 @@
 using AmGatewayCloud.WorkOrderService.Configuration;
 using AmGatewayCloud.WorkOrderService.Infrastructure;
 using AmGatewayCloud.WorkOrderService.Services;
+using AmGatewayCloud.Shared.Observability;
 using AmGatewayCloud.Shared.Tenant;
 using Serilog;
 
@@ -42,6 +43,9 @@ try
 
     // 租户上下文
     builder.Services.AddTenantContext();
+
+    // OpenTelemetry
+    builder.Services.AddAmGatewayOpenTelemetry(builder.Configuration);
 
     // Swagger
     builder.Services.AddEndpointsApiExplorer();

@@ -47,8 +47,27 @@
 - **每一步必须闭环**：可运行、可验证、有产出
 - **渐进式复杂度**：每次只引入 1-2 个新技术
 - **领域先行**：带着 DDD 思维写代码，后期提炼而非推倒重来
+- **中心先行**：业务侧是星形拓扑（WebApi 为中心），实现顺序必须是 **Shared → WebApi(BFF) → 业务服务 → 前端**。先锁中心再扩外围，避免基础能力缺失导致业务服务反复返工
 - **多租户伏笔**：从阶段 1 起，关键实体预留 `TenantId`
 - **三级隔离**：TenantId（公司）→ FactoryId（工厂）→ WorkshopId（车间）
+
+### 经验教训：管道侧 vs 业务侧的实现顺序
+
+```
+管道侧（阶段1-3）：线性流动，天然无返工
+  采集 → 边缘网关 → 云网关 → PostgreSQL
+  每步只依赖上游输出格式，不回头
+
+业务侧（阶段4+）：星形拓扑，中心必须先定
+           AlarmService
+          ↗              ↘
+   WebApi(BFF)           前端
+          ↘              ↗
+          WorkOrderService
+
+  ❌ 错误顺序：业务服务 → BFF → 前端（基础能力缺失，反复补洞）
+  ✅ 正确顺序：Shared → BFF → 业务服务 → 前端（中心锁死，外围照着实现）
+```
 
 ---
 
@@ -140,13 +159,25 @@ MQTT Subscribe (amgateway/#)
 
 ---
 
-## 阶段 4：报警服务 — 业务逻辑的起点 ✅
+## 阶段 4：BFF 基座 + 报警服务 ✅
 
-**目标**：定时拉取 TimescaleDB 数据评估报警规则，生成报警事件，通过 RabbitMQ + SignalR 实时推送，提供 HTTP API 查询/管理。
+**目标**：搭建 BFF 网关和共享契约层，再接入首个业务服务（报警），验证完整链路。
 
 **新增技术**：SignalR、RabbitMQ（/business vhost）、YARP 反向代理、Dapper + Npgsql
 
+**实现顺序（中心先行）**：
+1. `Shared` — 契约先行（DTOs、常量、MQ 消息、配置模型）
+2. `WebApi` — BFF 先行（YARP 代理框架、SignalR Hub、CORS）
+3. `AlarmService` — 业务服务接入（依赖 Shared 契约 + WebApi 转发）
+4. 联调验证
+
 **产出**：
+- `AmGatewayCloud.Shared` — 共享契约库
+  - DTOs、常量（ValidOperators/ValidLevels）、MQ 消息定义、配置模型
+- `AmGatewayCloud.WebApi` — 纯 BFF（Backend for Frontend）
+  - YARP 反向代理：/api/alarms/*、/api/alarmrules/* → AlarmService
+  - SignalR Hub：订阅 RabbitMQ 报警事件，按工厂分组推送前端
+  - 零数据库访问、零业务逻辑
 - `AmGatewayCloud.AlarmService` — 报警业务微服务（WebApplication）
   - 定时拉取 TimescaleDB 最新数据点（DISTINCT ON 去重）
   - 规则评估引擎：数值/字符串阈值比较 + Deadband 自动恢复 + 冷却防抖
@@ -157,12 +188,6 @@ MQTT Subscribe (amgateway/#)
   - 设备离线检测（is_stale 标记）
   - 16 条默认规则种子数据
   - 健康检查端点（/health）
-- `AmGatewayCloud.WebApi` — 纯 BFF（Backend for Frontend）
-  - YARP 反向代理：/api/alarms/*、/api/alarmrules/* → AlarmService
-  - SignalR Hub：订阅 RabbitMQ 报警事件，按工厂分组推送前端
-  - 零数据库访问、零业务逻辑
-- `AmGatewayCloud.Shared` — 共享契约库
-  - DTOs、常量（ValidOperators/ValidLevels）、MQ 消息定义、配置模型
 
 **领域模型**：
 - `AlarmRule` — 报警规则（Id, Tag, Operator, Threshold, ThresholdString, ClearThreshold, Level, CooldownMinutes, 三级作用域）
@@ -232,21 +257,21 @@ Vue (Pinia) ──REST──► WebApi (BFF) ──YARP──► AlarmService
 
 ---
 
-## 阶段 6：DDD 提炼 + 维修工单
+## 阶段 6：DDD 提炼 + 维修工单 ✅
 
 **目标**：用 DDD 思想提炼领域模型，从 AlarmService 抽取领域层；引入工单系统，实现报警→工单自动联动。
 
 **新增技术**：EF Core、MediatR（领域事件）、领域事件机制
 
-### 6.1 DDD 提炼
+### 6.1 DDD 提炼 ✅
 
 **产出**：
-- `AmGatewayCloud.Domain` — 领域层
-  - 聚合根：`Equipment`、`Alarm`（从阶段4 AlarmEvent/AlarmRule 提炼）
+- `AmGatewayCloud.AlarmDomain` — 领域层
+  - 聚合根：`Alarm`（从阶段4 AlarmEvent/AlarmRule 提炼）
   - 值对象：`AlarmLevel`、`AlarmStatus`、`OperatorType`
   - 领域事件：`AlarmTriggeredEvent`、`AlarmClearedEvent`
   - 领域服务：规则评估逻辑从 AlarmService 迁入
-- `AmGatewayCloud.Infrastructure` — 基础设施层
+- `AmGatewayCloud.AlarmInfrastructure` — 基础设施层
   - EF Core DbContext + 仓储实现
   - 数据库迁移（从 init-db.sql → EF Core Migration）
   - MediatR 领域事件发布
@@ -270,52 +295,49 @@ AlarmService → Domain（聚合根 + 领域服务）
 - EF Core Migration 可从空库重建完整 schema
 - 领域事件（AlarmTriggered/Cleared）通过 MediatR 正确发布
 
-### 6.2 维修工单系统
+### 6.2 维修工单系统 ✅
+
+**实现顺序（中心先行）**：
+1. `Shared` — 新增 WorkOrder DTOs、MQ 消息契约
+2. `WebApi` — 新增 YARP 代理路由 `/api/workorders/*`
+3. `WorkOrderService` — 工单业务服务（消费报警事件 → 创建工单）
+4. 前端工单页
 
 **产出**：
-- `WorkOrder` 聚合根（Domain 层）
-  - Id, AlarmId, EquipmentId, Status, Assignee, CreatedAt, TenantId
+- `AmGatewayCloud.WorkOrderService` — 工单微服务
+  - WorkOrder 聚合根（Id, AlarmId, EquipmentId, Status, Assignee, CreatedAt, TenantId）
   - Status: Pending → InProgress → Completed
-- 领域事件联动：`AlarmTriggeredEvent` → 自动创建工单
-- AlarmService 新增工单管理 API：创建、查询、分配、完成
+  - RabbitMQ 消费 `AlarmTriggeredEvent` → 自动创建工单
+  - HTTP API：工单查询、分配、完成、统计
+  - Dapper + PostgreSQL
 - WebApi 新增 YARP 代理路由：`/api/workorders/*`
+- Shared 新增 WorkOrder DTOs
 - 前端工单页：工单列表、详情、分配、完成操作
-- AlarmRule 热更新：WebApi 修改规则后通过 RabbitMQ 即时通知 AlarmService
-
-**领域模型（提炼后）**：
-```
-Equipment (聚合根)
-├── Id, Name, FactoryId, WorkshopId, TenantId
-└── Alarms (集合)
-
-Alarm (聚合根)
-├── Id, EquipmentId, Level, Status, Message, Timestamp, TenantId
-└── WorkOrders (集合)
-
-WorkOrder (聚合根)
-├── Id, AlarmId, EquipmentId, Status, Assignee, CreatedAt, TenantId
-└── Status: Pending → InProgress → Completed
-```
-
-**验证标准**：
-- 报警触发 → 自动生成工单 → 前端工单页可查看/处理
-- 工单状态流转正确（Pending → InProgress → Completed）
-- 工单按 TenantId 隔离
 
 ---
 
-## 阶段 7：多租户完善
+## 阶段 7：多租户完善 ✅
 
 **目标**：平台卖给多个公司，不同公司登录只看到自己的工厂、设备和报警。
 
 **新增技术**：JWT + 租户识别中间件
 
+**实现顺序（中心先行）**：
+1. `Shared/Tenant/` — ITenantContext、TenantContext、TenantMiddleware、ServiceExtensions
+2. `Shared/Auth/` — JwtTokenHelper（开发环境 token 生成）
+3. `WebApi` — JWT Bearer 认证 + TenantMiddleware + YARP 透传 X-Tenant-Id + AuthController
+4. `AlarmService` — AddTenantContext + EF Core Global Query Filter（自动租户隔离）
+5. `WorkOrderService` — AddTenantContext + Dapper 查询附加 tenant_id 条件
+6. 前端 — auth store + 路由守卫 + axios 拦截器 + SignalR token 注入
+
 **产出**：
-- 租户识别中间件：从 JWT 提取 TenantId，注入请求上下文
-- 数据库查询自动附加 `WHERE TenantId = @currentTenant`
-- EF Core Global Query Filter 实现透明隔离
-- 租户管理 API：创建租户、分配工厂/设备
-- 边缘网关按配置注入 TenantId，数据自带租户标签
+- 租户识别中间件：从 JWT `tenant_id` claim 或 `X-Tenant-Id` header 提取 TenantId，AsyncLocal 注入请求上下文
+- EF Core Global Query Filter 实现透明隔离（AlarmEventEntity/AlarmRuleEntity 自动附加 TenantId 条件）
+- Dapper 查询显式附加 `WHERE tenant_id = @tenantId`
+- YARP 请求转换：从 ITenantContext 读取 TenantId，注入 `X-Tenant-Id` header 转发给下游
+- SignalR Hub：按 `tenant-{id}` 和 `tenant-{id}-factory-{fid}` 分组推送
+- JWT 认证：WebApi Bearer 验证 + SignalR access_token 查询参数
+- 前端登录页 + auth store + 401 自动跳转
 
 **前置伏笔（从阶段 1 开始）**：
 - 所有实体预留 `TenantId` 字段（可先为默认值或 nullable）
@@ -329,30 +351,35 @@ WorkOrder (聚合根)
 
 ---
 
-## 阶段 8：容器化 + 可观测性
+## 阶段 8：容器化 + 可观测性 ✅
 
 **目标**：全栈 Docker Compose 编排 + 结构化日志 + 分布式追踪。
 
-**新增技术**：Docker Compose、Serilog + Seq、OpenTelemetry + Jaeger/Zipkin
+**新增技术**：Serilog + Seq、OpenTelemetry + Jaeger
+
+**实现顺序（中心先行）**：
+1. `Shared/Observability/` — OTel 扩展方法（`AddAmGatewayOpenTelemetry`），统一注册 Tracing + Metrics
+2. Docker Compose 添加 Seq + Jaeger 容器
+3. 三个后端服务引用 OTel 扩展 + Seq Sink
+4. `TenantMiddleware` 注入 Serilog `LogContext`，日志自动携带 TenantId
+5. OTel ASP.NET Core Instrumentation 从 `X-Tenant-Id` Header 注入 Span Tag
 
 **产出**：
-- `docker-compose.yml` — 编排所有服务
-  - AmGatewayCloud.Simulator
-  - AmGatewayCloud.Collector.Modbus / OpcUa
-  - Mosquitto（边缘 MQTT Broker）
-  - AmGatewayCloud.EdgeGateway + InfluxDB + Grafana（边缘侧）
-  - RabbitMQ（工厂级）
-  - AmGatewayCloud.CloudGateway + PostgreSQL + 云时序库（云端）
-  - AmGatewayCloud.AlarmService + WebApi + Shared
-  - Seq（日志）
-  - Jaeger（追踪）
-- Serilog 结构化日志 → Seq（日志中携带 TenantId）
-- OpenTelemetry 追踪：采集器 → EdgeHub → RabbitMQ → CloudGateway → 报警 → 工单 完整链路（Span 中注入 TenantId）
+- `AmGatewayCloud.Shared/Observability/OpenTelemetryExtensions.cs` — 统一 OTel 注册
+  - ASP.NET Core Instrumentation（过滤 /health、/swagger）
+  - HttpClient Instrumentation
+  - OTLP Exporter → Jaeger
+  - Span 中自动注入 `tenant.id` Tag
+- Seq 容器 — 结构化日志聚合（http://localhost:8081）
+- Jaeger 容器 — 分布式追踪 UI（http://localhost:16686）
+- docker-compose.yml — 所有业务服务依赖 Seq + Jaeger，环境变量注入 OTel/Seq 配置
+- Serilog Enrich: `FromLogContext` + `WithMachineName` + `WithThreadId`
+- TenantMiddleware 中 `LogContext.PushProperty("TenantId", tenantId)` — 所有日志自动携带
 
 **验证标准**：
 - `docker compose up` 一键启动全部服务
-- Jaeger 中可查 "采集器→EdgeHub→RabbitMQ→报警→工单" 完整调用链，可按 TenantId 过滤
-- Seq 中可按结构化字段（含 TenantId）搜索日志
+- Jaeger 中可查 "WebApi→AlarmService/WorkOrderService" 调用链，可按 `tenant.id` 过滤
+- Seq 中可按 `TenantId` 结构化字段搜索日志
 
 ---
 
@@ -376,7 +403,8 @@ WorkOrder (聚合根)
 | 领域事件 | MediatR（阶段6+） |
 | 缓存/共享状态 | Redis（阶段 6+ 引入） |
 | 容器化 | Docker + Docker Compose |
-| 日志 | Serilog → Seq |
+| 日志 | Serilog → Seq（阶段8） |
+| 追踪 | OpenTelemetry → Jaeger（阶段8） |
 | 追踪 | OpenTelemetry → Jaeger |
 | 可视化 | Grafana |
 | 认证 | JWT |
@@ -399,11 +427,27 @@ WorkOrder (聚合根)
 | AmGatewayCloud.Collector.OpcUa | 1 | OPC UA 采集器 + MQTT 推送 |
 | AmGatewayCloud.EdgeGateway | 2 | 边缘聚合：MQTT订阅 → InfluxDB + RabbitMQ |
 | AmGatewayCloud.CloudGateway | 3 | 云端聚合：多RabbitMQ消费 → PostgreSQL + 时序库 |
+| AmGatewayCloud.Shared | 4 | 共享契约库（DTOs + Constants + Messages + Config + Tenant + Auth） |
+| AmGatewayCloud.WebApi | 4 | BFF（YARP 反向代理 + SignalR 推送 + JWT 认证 + 租户透传） |
 | AmGatewayCloud.AlarmService | 4 | 报警业务微服务（评估引擎 + HTTP API） |
-| AmGatewayCloud.WebApi | 4 | BFF（YARP 反向代理 + SignalR 推送） |
-| AmGatewayCloud.Shared | 4 | 共享契约库（DTOs + Constants + Messages + Config） |
-| AmGatewayCloud.Web | 5 | Vue 3 前端（报警看板 + 规则管理 + 设备状态） |
-| AmGatewayCloud.Domain | 6 | 领域层（聚合根 + 领域事件） |
-| AmGatewayCloud.Infrastructure | 6 | EF Core 仓储 |
+| AmGatewayCloud.Web | 5 | Vue 3 前端（报警看板 + 规则管理 + 设备状态 + 工单管理） |
+| AmGatewayCloud.AlarmDomain | 6 | 报警领域层（聚合根 + 领域事件 + 值对象） |
+| AmGatewayCloud.AlarmInfrastructure | 6 | 报警基础设施层（EF Core 仓储 + 领域事件发布） |
+| AmGatewayCloud.WorkOrderService | 6 | 工单微服务（报警联动 + 工单管理 + Dapper 查询） |
 
 AmGatewayCloud 负责**边缘采集 → 边缘聚合 → 云端聚合 → 业务服务**全链路，通过 MQTT/RabbitMQ 逐级解耦，支持从单车间到多工厂的水平扩展。
+
+### 实现顺序总结
+
+```
+管道侧（线性，不回头）：
+  阶段1 采集器 → 阶段2 边缘网关 → 阶段3 云网关 → PostgreSQL
+
+业务侧（中心先行，星形扩展）：
+  阶段4 Shared → WebApi(BFF) → AlarmService
+  阶段5 前端（消费 BFF 已稳定的 API）
+  阶段6 Shared DTOs → WebApi 路由 → WorkOrderService → 前端
+  阶段7 Shared Tenant → WebApi 认证+中间件 → 业务服务适配 → 前端适配
+
+关键原则：越被依赖的越先做
+```
