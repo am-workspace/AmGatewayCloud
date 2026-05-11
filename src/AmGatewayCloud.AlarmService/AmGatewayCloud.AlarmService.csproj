@@ -7,8 +7,10 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+    <!-- Npgsql + Dapper: 仅用于 TimescaleDbReader 读取 device_data 表（外部限界上下文），报警域 CRUD 已全部迁移到 EF Core -->
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="MediatR" Version="12.5.0" />
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
@@ -16,5 +18,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\AmGatewayCloud.Shared\AmGatewayCloud.Shared.csproj" />
+    <ProjectReference Include="..\AmGatewayCloud.AlarmDomain\AmGatewayCloud.AlarmDomain.csproj" />
+    <ProjectReference Include="..\AmGatewayCloud.AlarmInfrastructure\AmGatewayCloud.AlarmInfrastructure.csproj" />
   </ItemGroup>
 </Project>

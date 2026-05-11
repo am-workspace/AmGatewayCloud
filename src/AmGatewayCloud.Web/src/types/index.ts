@@ -135,6 +135,47 @@ export interface PagedResult<T> {
   totalPages: number
 }
 
+// 工单状态
+export type WorkOrderStatus = 'Pending' | 'InProgress' | 'Completed'
+
+// 维修工单 — 对应后端 WorkOrderDto
+export interface WorkOrder {
+  id: string
+  alarmId: string
+  tenantId: string
+  factoryId: string
+  workshopId: string | null
+  deviceId: string
+  title: string
+  description: string | null
+  level: string
+  status: WorkOrderStatus
+  assignee: string | null
+  assignedAt: string | null
+  completedAt: string | null
+  completedBy: string | null
+  completionNote: string | null
+  createdAt: string
+}
+
+// 工单状态汇总
+export interface WorkOrderSummary {
+  pending: number
+  inProgress: number
+  completed: number
+}
+
+// 分配工单请求
+export interface AssignWorkOrderRequest {
+  assignee: string
+}
+
+// 完成工单请求
+export interface CompleteWorkOrderRequest {
+  completedBy: string
+  completionNote?: string | null
+}
+
 // SignalR 推送消息 — 对应后端 AlarmEventMessage
 export interface AlarmEventMessage {
   id: string

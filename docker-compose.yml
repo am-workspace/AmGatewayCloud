@@ -153,6 +153,38 @@ services:
       WebApi__RabbitMq__Exchange: amgateway.alarms
       WebApi__RabbitMq__QueueName: amgateway.alarm-notifications
       ReverseProxy__Clusters__alarm-service__Destinations__default__Address: "http://alarm-service:5001"
+      ReverseProxy__Clusters__workorder-service__Destinations__default__Address: "http://workorder-service:5002"
+    restart: unless-stopped
+
+  # ── 维修工单服务 (Phase 6) ──
+  workorder-service:
+    build:
+      context: .
+      dockerfile: docker/workorder-service/Dockerfile
+    container_name: amgw-workorder-service
+    ports:
+      - "5002:5002"
+    depends_on:
+      rabbitmq-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      WorkOrderService__TenantId: default
+      WorkOrderService__AutoCreateOnAlarm: "true"
+      WorkOrderService__PostgreSql__Host: timescaledb
+      WorkOrderService__PostgreSql__Port: "5432"
+      WorkOrderService__PostgreSql__Database: amgateway_business
+      WorkOrderService__PostgreSql__Username: sa
+      WorkOrderService__PostgreSql__Password: sa
+      WorkOrderService__RabbitMq__HostName: rabbitmq
+      WorkOrderService__RabbitMq__Port: "5672"
+      WorkOrderService__RabbitMq__VirtualHost: /business
+      WorkOrderService__RabbitMq__Username: guest
+      WorkOrderService__RabbitMq__Password: guest
+      WorkOrderService__RabbitMq__Exchange: amgateway.alarms
+      WorkOrderService__RabbitMq__QueueName: amgateway.workorder.alarm-events
     restart: unless-stopped
 
   # ── 前端看板 (Phase 5) ──

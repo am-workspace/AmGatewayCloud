@@ -1,9 +1,14 @@
+using System.Text;
 using AmGatewayCloud.Shared.Configuration;
+using AmGatewayCloud.Shared.Tenant;
 using AmGatewayCloud.WebApi.Configuration;
 using AmGatewayCloud.WebApi.Hubs;
 using AmGatewayCloud.WebApi.Infrastructure;
 using AmGatewayCloud.WebApi.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 using Serilog;
+using Yarp.ReverseProxy.Transforms;
 
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(GetConfiguration(args))
@@ -31,9 +36,57 @@ try
     // SignalR
     builder.Services.AddSignalR();
 
-    // YARP 反向代理 — 转发到 AlarmService
+    // JWT 验证
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = "amgateway",
+                ValidateAudience = true,
+                ValidAudience = "amgateway-api",
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(
+                    Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Secret"]!))
+            };
+
+            // SignalR JWT: 从 access_token 查询参数读取
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    var accessToken = context.Request.Query["access_token"];
+                    var path = context.HttpContext.Request.Path;
+                    if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                    {
+                        context.Token = accessToken;
+                    }
+                    return Task.CompletedTask;
+                }
+            };
+        });
+    builder.Services.AddAuthorization();
+
+    // 租户上下文
+    builder.Services.AddTenantContext();
+
+    // YARP 反向代理 — 转发到 AlarmService / WorkOrderService + 透传 X-Tenant-Id
     builder.Services.AddReverseProxy()
-        .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
+        .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"))
+        .AddTransforms(transforms =>
+        {
+            transforms.AddRequestTransform(context =>
+            {
+                var tenantContext = context.HttpContext.RequestServices.GetRequiredService<ITenantContext>();
+                context.ProxyRequest.Headers.Add("X-Tenant-Id", tenantContext.TenantId);
+                return ValueTask.CompletedTask;
+            });
+        });
+
+    // Controllers（AuthController 等本地 API）
+    builder.Services.AddControllers();
 
     // Health Checks
     builder.Services.AddHealthChecks()
@@ -57,8 +110,15 @@ try
     app.UseCors("AlarmApiPolicy");
     app.UseRouting();
 
+    app.UseAuthentication();
+    app.UseTenantMiddleware();
+    app.UseAuthorization();
+
     // YARP 转发 — 所有 /api/* 请求转发到 AlarmService
     app.MapReverseProxy();
+
+    // 本地 Controllers（Auth 等）
+    app.MapControllers();
 
     // SignalR Hub
     app.MapHub<AlarmHub>("/hubs/alarm");

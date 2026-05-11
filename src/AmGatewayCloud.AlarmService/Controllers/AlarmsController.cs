@@ -1,3 +1,4 @@
+using AmGatewayCloud.AlarmDomain.Common;
 using AmGatewayCloud.Shared.DTOs;
 using AmGatewayCloud.AlarmService.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -53,12 +54,19 @@ public class AlarmsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.AcknowledgedBy))
             return BadRequest("AcknowledgedBy is required");
 
-        var result = await _queryService.AcknowledgeAsync(id, request.AcknowledgedBy, ct);
-        if (result is null)
-            return NotFound("Active alarm not found or already acknowledged");
+        try
+        {
+            var result = await _queryService.AcknowledgeAsync(id, request.AcknowledgedBy, ct);
+            if (result is null)
+                return NotFound("Alarm not found");
 
-        _logger.LogInformation("Alarm {AlarmId} acknowledged by {User}", id, request.AcknowledgedBy);
-        return Ok(result);
+            _logger.LogInformation("Alarm {AlarmId} acknowledged by {User}", id, request.AcknowledgedBy);
+            return Ok(result);
+        }
+        catch (AlarmStateException ex)
+        {
+            return Conflict(new { ex.Message, ex.CurrentStatus, ex.AttemptedOperation });
+        }
     }
 
     [HttpPost("{id:guid}/suppress")]
@@ -67,22 +75,36 @@ public class AlarmsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.SuppressedBy))
             return BadRequest("SuppressedBy is required");
 
-        var result = await _queryService.SuppressAsync(id, request.SuppressedBy, request.Reason, ct);
-        if (result is null)
-            return NotFound("Active/Acked alarm not found");
+        try
+        {
+            var result = await _queryService.SuppressAsync(id, request.SuppressedBy, request.Reason, ct);
+            if (result is null)
+                return NotFound("Alarm not found");
 
-        _logger.LogInformation("Alarm {AlarmId} suppressed by {User}: {Reason}", id, request.SuppressedBy, request.Reason);
-        return Ok(result);
+            _logger.LogInformation("Alarm {AlarmId} suppressed by {User}: {Reason}", id, request.SuppressedBy, request.Reason);
+            return Ok(result);
+        }
+        catch (AlarmStateException ex)
+        {
+            return Conflict(new { ex.Message, ex.CurrentStatus, ex.AttemptedOperation });
+        }
     }
 
     [HttpPost("{id:guid}/clear")]
     public async Task<ActionResult<AlarmEventDto>> Clear(Guid id, CancellationToken ct)
     {
-        var result = await _queryService.ClearAsync(id, ct);
-        if (result is null)
-            return NotFound("Open alarm not found");
+        try
+        {
+            var result = await _queryService.ClearAsync(id, ct);
+            if (result is null)
+                return NotFound("Alarm not found");
 
-        _logger.LogInformation("Alarm {AlarmId} manually cleared", id);
-        return Ok(result);
+            _logger.LogInformation("Alarm {AlarmId} manually cleared", id);
+            return Ok(result);
+        }
+        catch (AlarmStateException ex)
+        {
+            return Conflict(new { ex.Message, ex.CurrentStatus, ex.AttemptedOperation });
+        }
     }
 }

@@ -10,7 +10,7 @@ using System.Text.Json;
 namespace AmGatewayCloud.WebApi.Services;
 
 /// <summary>
-/// 报警事件订阅器：订阅 RabbitMQ 报警消息，推送到 SignalR Hub
+/// 报警事件订阅器：订阅 RabbitMQ 报警消息，按租户+工厂分组推送到 SignalR Hub
 /// </summary>
 public class AlarmEventSubscriber : BackgroundService
 {
@@ -69,16 +69,18 @@ public class AlarmEventSubscriber : BackgroundService
                     return;
                 }
 
-                // 按工厂分组推送到 SignalR
+                // 按租户+工厂分组推送到 SignalR
                 if (!string.IsNullOrEmpty(message.FactoryId))
                 {
-                    _hubContext.Clients.Group($"factory-{message.FactoryId}")
+                    var groupName = AlarmHub.GetGroupName(message.TenantId, message.FactoryId);
+                    _hubContext.Clients.Group(groupName)
                         .SendAsync("AlarmReceived", message, CancellationToken.None);
                 }
                 else
                 {
-                    // 无工厂信息时广播给所有客户端
-                    _hubContext.Clients.All
+                    // 无工厂信息时按租户广播
+                    var tenantGroup = $"tenant-{message.TenantId}";
+                    _hubContext.Clients.Group(tenantGroup)
                         .SendAsync("AlarmReceived", message, CancellationToken.None);
                 }
 

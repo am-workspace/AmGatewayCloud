@@ -304,34 +304,7 @@ WorkOrder (聚合根)
 
 ---
 
-## 阶段 7：容器化 + 可观测性
-
-**目标**：全栈 Docker Compose 编排 + 结构化日志 + 分布式追踪。
-
-**新增技术**：Docker Compose、Serilog + Seq、OpenTelemetry + Jaeger/Zipkin
-
-**产出**：
-- `docker-compose.yml` — 编排所有服务
-  - AmGatewayCloud.Simulator
-  - AmGatewayCloud.Collector.Modbus / OpcUa
-  - Mosquitto（边缘 MQTT Broker）
-  - AmGatewayCloud.EdgeGateway + InfluxDB + Grafana（边缘侧）
-  - RabbitMQ（工厂级）
-  - AmGatewayCloud.CloudGateway + PostgreSQL + 云时序库（云端）
-  - AmGatewayCloud.AlarmService + WebApi + Shared
-  - Seq（日志）
-  - Jaeger（追踪）
-- Serilog 结构化日志 → Seq
-- OpenTelemetry 追踪：采集器 → EdgeHub → RabbitMQ → CloudGateway → 报警 → 工单 完整链路
-
-**验证标准**：
-- `docker compose up` 一键启动全部服务
-- Jaeger 中可查 "采集器→EdgeHub→RabbitMQ→报警→工单" 完整调用链
-- Seq 中可按结构化字段搜索日志
-
----
-
-## 阶段 8：多租户完善
+## 阶段 7：多租户完善
 
 **目标**：平台卖给多个公司，不同公司登录只看到自己的工厂、设备和报警。
 
@@ -353,6 +326,33 @@ WorkOrder (聚合根)
 - 公司 A 登录 → 只看到自己的工厂、设备、报警
 - 公司 B 登录 → 看到的是另一套数据
 - 交叉访问 → 403 Forbidden
+
+---
+
+## 阶段 8：容器化 + 可观测性
+
+**目标**：全栈 Docker Compose 编排 + 结构化日志 + 分布式追踪。
+
+**新增技术**：Docker Compose、Serilog + Seq、OpenTelemetry + Jaeger/Zipkin
+
+**产出**：
+- `docker-compose.yml` — 编排所有服务
+  - AmGatewayCloud.Simulator
+  - AmGatewayCloud.Collector.Modbus / OpcUa
+  - Mosquitto（边缘 MQTT Broker）
+  - AmGatewayCloud.EdgeGateway + InfluxDB + Grafana（边缘侧）
+  - RabbitMQ（工厂级）
+  - AmGatewayCloud.CloudGateway + PostgreSQL + 云时序库（云端）
+  - AmGatewayCloud.AlarmService + WebApi + Shared
+  - Seq（日志）
+  - Jaeger（追踪）
+- Serilog 结构化日志 → Seq（日志中携带 TenantId）
+- OpenTelemetry 追踪：采集器 → EdgeHub → RabbitMQ → CloudGateway → 报警 → 工单 完整链路（Span 中注入 TenantId）
+
+**验证标准**：
+- `docker compose up` 一键启动全部服务
+- Jaeger 中可查 "采集器→EdgeHub→RabbitMQ→报警→工单" 完整调用链，可按 TenantId 过滤
+- Seq 中可按结构化字段（含 TenantId）搜索日志
 
 ---
 

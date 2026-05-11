@@ -15,9 +15,12 @@ export async function startSignalR() {
   if (connection?.state === signalR.HubConnectionState.Connected) return
 
   const baseUrl = import.meta.env.VITE_API_BASE_URL || ''
+  const token = localStorage.getItem('amgateway_token')
 
   connection = new signalR.HubConnectionBuilder()
-    .withUrl(`${baseUrl}/hubs/alarm`)
+    .withUrl(`${baseUrl}/hubs/alarm`, {
+      accessTokenFactory: () => token ?? '',
+    })
     .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
     .configureLogging(signalR.LogLevel.Warning)
     .build()

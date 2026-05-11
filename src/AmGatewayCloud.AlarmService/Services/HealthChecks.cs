@@ -1,21 +1,21 @@
+using AmGatewayCloud.AlarmInfrastructure.Persistence;
 using AmGatewayCloud.Shared.Configuration;
-using Dapper;
-using Npgsql;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using RabbitMQ.Client;
 
 namespace AmGatewayCloud.AlarmService.Services;
 
 /// <summary>
-/// PostgreSQL 连接健康检查
+/// PostgreSQL 连接健康检查（使用 EF Core，不再依赖 Dapper）
 /// </summary>
 public class PostgreSqlHealthCheck : IHealthCheck
 {
-    private readonly string _connectionString;
+    private readonly IDbContextFactory<AppDbContext> _dbContextFactory;
 
-    public PostgreSqlHealthCheck(PostgreSqlConfig config)
+    public PostgreSqlHealthCheck(IDbContextFactory<AppDbContext> dbContextFactory)
     {
-        _connectionString = config.ConnectionString;
+        _dbContextFactory = dbContextFactory;
     }
 
     public async Task<HealthCheckResult> CheckHealthAsync(
@@ -23,12 +23,11 @@ public class PostgreSqlHealthCheck : IHealthCheck
     {
         try
         {
-            await using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync(ct);
-            var result = await conn.ExecuteScalarAsync<int>("SELECT 1", ct);
-            return result == 1
+            await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct);
+            var canConnect = await dbContext.Database.CanConnectAsync(ct);
+            return canConnect
                 ? HealthCheckResult.Healthy("PostgreSQL connection OK")
-                : HealthCheckResult.Unhealthy("PostgreSQL query returned unexpected result");
+                : HealthCheckResult.Unhealthy("PostgreSQL connection failed");
         }
         catch (Exception ex)
         {

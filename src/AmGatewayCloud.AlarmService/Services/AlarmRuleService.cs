@@ -1,6 +1,9 @@
+using AmGatewayCloud.AlarmDomain.Aggregates.Alarm;
+using AmGatewayCloud.AlarmDomain.Services;
+using AmGatewayCloud.AlarmInfrastructure.Repositories;
 using AmGatewayCloud.Shared.Constants;
 using AmGatewayCloud.Shared.DTOs;
-using AmGatewayCloud.AlarmService.Models;
+using AmGatewayCloud.Shared.Tenant;
 
 namespace AmGatewayCloud.AlarmService.Services;
 
@@ -10,11 +13,13 @@ namespace AmGatewayCloud.AlarmService.Services;
 public class AlarmRuleService
 {
     private readonly AlarmRuleRepository _ruleRepo;
+    private readonly ITenantContext _tenantContext;
     private readonly ILogger<AlarmRuleService> _logger;
 
-    public AlarmRuleService(AlarmRuleRepository ruleRepo, ILogger<AlarmRuleService> logger)
+    public AlarmRuleService(AlarmRuleRepository ruleRepo, ITenantContext tenantContext, ILogger<AlarmRuleService> logger)
     {
         _ruleRepo = ruleRepo;
+        _tenantContext = tenantContext;
         _logger = logger;
     }
 
@@ -54,27 +59,18 @@ public class AlarmRuleService
         if (!AlarmConstants.ValidLevels.Contains(request.Level))
             return (null, $"Invalid level '{request.Level}'. Valid: {string.Join(", ", AlarmConstants.ValidLevels)}");
 
-        if (!ValidateClearThreshold(request.Operator, request.Threshold, request.ClearThreshold, out var validationError))
+        var op = AlarmRule.ParseOperator(request.Operator);
+        var (valid, validationError) = AlarmDomainService.ValidateClearThresholdWithError(op, request.Threshold, request.ClearThreshold);
+        if (!valid)
             return (null, validationError);
 
-        var rule = new AlarmRule
-        {
-            Id = request.Id,
-            Name = request.Name,
-            TenantId = request.TenantId,
-            FactoryId = request.FactoryId,
-            DeviceId = request.DeviceId,
-            Tag = request.Tag,
-            Operator = request.Operator,
-            Threshold = request.Threshold,
-            ThresholdString = request.ThresholdString,
-            ClearThreshold = request.ClearThreshold,
-            Level = request.Level,
-            CooldownMinutes = request.CooldownMinutes,
-            DelaySeconds = request.DelaySeconds,
-            Enabled = request.Enabled,
-            Description = request.Description
-        };
+        var rule = new AlarmRule(
+            request.Id, request.Name, _tenantContext.TenantId, request.FactoryId, request.DeviceId,
+            request.Tag, op, request.Threshold, request.ThresholdString,
+            request.ClearThreshold, AlarmRule.ParseLevel(request.Level),
+            request.CooldownMinutes, request.DelaySeconds,
+            request.Enabled, request.Description,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
 
         var (createdRule, error) = await _ruleRepo.CreateRuleAsync(rule, ct);
         if (error is not null)
@@ -92,18 +88,19 @@ public class AlarmRuleService
         if (existing is null)
             return (null, $"Rule '{ruleId}' not found");
 
-        var op = request.Operator ?? existing.Operator;
+        var op = request.Operator is not null ? AlarmRule.ParseOperator(request.Operator) : existing.Operator;
         if (request.Operator is not null && !AlarmConstants.ValidOperators.Contains(request.Operator))
             return (null, $"Invalid operator '{request.Operator}'. Valid: {string.Join(", ", AlarmConstants.ValidOperators)}");
 
-        var level = request.Level ?? existing.Level;
+        var levelStr = request.Level ?? existing.LevelString;
         if (request.Level is not null && !AlarmConstants.ValidLevels.Contains(request.Level))
             return (null, $"Invalid level '{request.Level}'. Valid: {string.Join(", ", AlarmConstants.ValidLevels)}");
 
         var threshold = request.Threshold ?? existing.Threshold;
         var clearThreshold = request.ClearThreshold ?? existing.ClearThreshold;
 
-        if (!ValidateClearThreshold(op, threshold, clearThreshold, out var validationError))
+        var (valid, validationError) = AlarmDomainService.ValidateClearThresholdWithError(op, threshold, clearThreshold);
+        if (!valid)
             return (null, validationError);
 
         var updates = new Dictionary<string, object?>();
@@ -133,27 +130,6 @@ public class AlarmRuleService
         return await _ruleRepo.DeleteRuleAsync(ruleId, ct);
     }
 
-    private static bool ValidateClearThreshold(string op, double threshold, double? clearThreshold, out string? error)
-    {
-        error = null;
-        if (clearThreshold is null) return true;
-
-        var valid = op switch
-        {
-            ">" or ">=" => clearThreshold.Value < threshold,
-            "<" or "<=" => clearThreshold.Value > threshold,
-            _ => true
-        };
-
-        if (!valid)
-        {
-            error = op is ">" or ">="
-                ? $"ClearThreshold ({clearThreshold.Value}) must be less than Threshold ({threshold}) for '{op}' operator"
-                : $"ClearThreshold ({clearThreshold.Value}) must be greater than Threshold ({threshold}) for '{op}' operator";
-        }
-        return valid;
-    }
-
     private static AlarmRuleDto MapToDto(AlarmRule rule) => new()
     {
         Id = rule.Id,
@@ -162,11 +138,11 @@ public class AlarmRuleService
         FactoryId = rule.FactoryId,
         DeviceId = rule.DeviceId,
         Tag = rule.Tag,
-        Operator = rule.Operator,
+        Operator = rule.OperatorString,
         Threshold = rule.Threshold,
         ThresholdString = rule.ThresholdString,
         ClearThreshold = rule.ClearThreshold,
-        Level = rule.Level,
+        Level = rule.LevelString,
         CooldownMinutes = rule.CooldownMinutes,
         DelaySeconds = rule.DelaySeconds,
         Enabled = rule.Enabled,

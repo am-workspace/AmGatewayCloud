@@ -23,9 +23,12 @@ import {
   SoundOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  FormOutlined,
+  LogoutOutlined,
 } from '@ant-design/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useAlarmStore } from '@/stores/alarm'
+import { useAuthStore } from '@/stores/auth'
 import { useAlarmSignalR, startSignalR, stopSignalR } from '@/composables/useAlarmSignalR'
 import { initSoundOnInteraction } from '@/composables/useAlarmSound'
 import AlarmNotification from '@/components/AlarmNotification.vue'
@@ -34,6 +37,7 @@ const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
 const alarmStore = useAlarmStore()
+const authStore = useAuthStore()
 const { connectionState } = useAlarmSignalR()
 
 const collapsed = computed({
@@ -46,6 +50,7 @@ const selectedKeys = computed(() => {
   const path = route.path
   if (path.startsWith('/alarms')) return ['alarms']
   if (path.startsWith('/rules')) return ['rules']
+  if (path.startsWith('/workorders')) return ['workorders']
   if (path.startsWith('/devices')) return ['devices']
   return ['dashboard']
 })
@@ -75,6 +80,7 @@ function onMenuClick({ key }: { key: string }) {
     dashboard: '/dashboard',
     alarms: '/alarms',
     rules: '/rules',
+    workorders: '/workorders',
     devices: '/devices',
   }
   router.push(map[key] || '/dashboard')
@@ -163,6 +169,10 @@ onUnmounted(() => {
           <ToolOutlined />
           <span>规则管理</span>
         </MenuItem>
+        <MenuItem key="workorders">
+          <FormOutlined />
+          <span>维修工单</span>
+        </MenuItem>
         <MenuItem key="devices">
           <DesktopOutlined />
           <span>设备状态</span>
@@ -206,6 +216,10 @@ onUnmounted(() => {
               <SoundOutlined />
               <span style="position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; background: #ff4d4f; border-radius: 50%" />
             </span>
+          </Button>
+          <span class="tenant-badge">{{ authStore.tenantId }}</span>
+          <Button type="text" @click="authStore.logout()" title="登出">
+            <LogoutOutlined />
           </Button>
         </div>
       </LayoutHeader>
@@ -288,6 +302,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.tenant-badge {
+  padding: 2px 8px;
+  background: #e6f7ff;
+  color: #1890ff;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .app-content {

@@ -1,6 +1,10 @@
 using AmGatewayCloud.AlarmService.Configuration;
 using AmGatewayCloud.AlarmService.Infrastructure;
 using AmGatewayCloud.AlarmService.Services;
+using AmGatewayCloud.AlarmInfrastructure.Events;
+using AmGatewayCloud.AlarmInfrastructure.Persistence;
+using AmGatewayCloud.Shared.Tenant;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -22,14 +26,26 @@ try
         sp.GetRequiredService<IConfiguration>().GetSection("AlarmService").Get<AlarmServiceConfig>()
         ?? new AlarmServiceConfig());
 
+    // EF Core DbContext
+    var alarmConfig = builder.Configuration.GetSection("AlarmService").Get<AlarmServiceConfig>() ?? new();
+    builder.Services.AddDbContext<AppDbContext>(options =>
+        options.UseNpgsql(alarmConfig.PostgreSql.ConnectionString));
+    builder.Services.AddDbContextFactory<AppDbContext>(options =>
+        options.UseNpgsql(alarmConfig.PostgreSql.ConnectionString));
+
+    // MediatR（领域事件发布）
+    builder.Services.AddMediatR(cfg =>
+        cfg.RegisterServicesFromAssembly(typeof(MediatRDomainEventPublisher).Assembly));
+
     // 核心服务
     builder.Services.AddSingleton<RuleEvaluator>();
     builder.Services.AddSingleton<CooldownManager>();
+    builder.Services.AddSingleton<DelayTracker>();
 
-    // 数据访问
+    // 数据访问（EF Core 仓储，Scoped 以匹配 DbContext 生命周期）
+    builder.Services.AddScoped<AmGatewayCloud.AlarmInfrastructure.Repositories.AlarmEventRepository>();
+    builder.Services.AddScoped<AmGatewayCloud.AlarmInfrastructure.Repositories.AlarmRuleRepository>();
     builder.Services.AddSingleton<TimescaleDbReader>();
-    builder.Services.AddSingleton<AlarmEventRepository>();
-    builder.Services.AddSingleton<AlarmRuleRepository>();
 
     // 消息基础设施
     builder.Services.AddSingleton<RabbitMqConnectionManager>();
@@ -42,11 +58,14 @@ try
     builder.Services.AddHostedService<AlarmEvaluationHostedService>();
 
     // 业务 API
-    builder.Services.AddSingleton<AlarmRuleService>();
-    builder.Services.AddSingleton<AlarmQueryService>();
+    builder.Services.AddScoped<AlarmRuleService>();
+    builder.Services.AddScoped<AlarmQueryService>();
 
     // Controllers
     builder.Services.AddControllers();
+
+    // 租户上下文
+    builder.Services.AddTenantContext();
 
     // Swagger
     builder.Services.AddEndpointsApiExplorer();
@@ -78,6 +97,8 @@ try
         app.UseSwagger();
         app.UseSwaggerUI();
     }
+
+    app.UseTenantMiddleware();
 
     app.MapControllers();
     app.MapHealthChecks("/health");

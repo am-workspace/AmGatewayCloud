@@ -9,9 +9,15 @@ const client = axios.create({
   },
 })
 
-// 请求拦截器
+// 请求拦截器：自动附加 Authorization Header
 client.interceptors.request.use(
-  (config) => config,
+  (config) => {
+    const token = localStorage.getItem('amgateway_token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
   (error) => Promise.reject(error)
 )
 
@@ -20,12 +26,18 @@ client.interceptors.response.use(
   (response) => response,
   (error) => {
     if (!error.response) {
-      // 网络错误 / 超时
       message.error('网络连接失败，请检查网络')
     } else {
       const status = error.response.status
       if (status === 401) {
-        message.error('登录已过期，请重新登录')
+        // Token 过期或无效，清除本地会话并跳转登录
+        localStorage.removeItem('amgateway_token')
+        localStorage.removeItem('amgateway_user')
+        // 避免在登录页循环跳转
+        if (!window.location.pathname.startsWith('/login')) {
+          message.error('登录已过期，请重新登录')
+          window.location.href = '/login'
+        }
       } else if (status === 403) {
         message.error('没有操作权限')
       } else if (status === 404) {
@@ -33,7 +45,6 @@ client.interceptors.response.use(
       } else if (status >= 500) {
         message.error('服务器异常，请稍后重试')
       } else {
-        // 400 / 409 等业务错误，优先显示后端返回的消息
         const data = error.response.data
         const msg = typeof data === 'string' ? data : data?.message || data?.title || '请求失败'
         message.error(msg)

@@ -1,25 +1,31 @@
 using AmGatewayCloud.AlarmService.Configuration;
 using AmGatewayCloud.AlarmService.Models;
-using Npgsql;
+using AmGatewayCloud.AlarmDomain.Aggregates.Alarm;
+using AmGatewayCloud.AlarmInfrastructure.Repositories;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
 
 namespace AmGatewayCloud.AlarmService.Services;
+
+using DomainAlarm = AmGatewayCloud.AlarmDomain.Aggregates.Alarm.Alarm;
+using DomainAlarmRule = AmGatewayCloud.AlarmDomain.Aggregates.Alarm.AlarmRule;
 
 /// <summary>
 /// 报警评估主循环：定时拉取 TimescaleDB 最新数据，评估报警规则，生成/恢复报警事件
 /// </summary>
 public class AlarmEvaluationHostedService : BackgroundService
 {
+    private readonly IServiceProvider _serviceProvider;
     private readonly AlarmServiceConfig _config;
     private readonly RuleEvaluator _ruleEvaluator;
     private readonly CooldownManager _cooldownManager;
-    private readonly AlarmEventRepository _alarmRepo;
-    private readonly AlarmRuleRepository _ruleRepo;
+    private readonly DelayTracker _delayTracker;
     private readonly TimescaleDbReader _timescaleReader;
     private readonly AlarmEventPublisher _publisher;
     private readonly ILogger<AlarmEvaluationHostedService> _logger;
 
     private DateTimeOffset _lastEvalTime;
-    private List<AlarmRule> _ruleCache = [];
+    private List<DomainAlarmRule> _ruleCache = [];
     private DateTimeOffset _ruleCacheTime = DateTimeOffset.MinValue;
     private int _consecutiveErrors;
 
@@ -27,20 +33,20 @@ public class AlarmEvaluationHostedService : BackgroundService
     public int ConsecutiveErrors => _consecutiveErrors;
 
     public AlarmEvaluationHostedService(
+        IServiceProvider serviceProvider,
         AlarmServiceConfig config,
         RuleEvaluator ruleEvaluator,
         CooldownManager cooldownManager,
-        AlarmEventRepository alarmRepo,
-        AlarmRuleRepository ruleRepo,
+        DelayTracker delayTracker,
         TimescaleDbReader timescaleReader,
         AlarmEventPublisher publisher,
         ILogger<AlarmEvaluationHostedService> logger)
     {
+        _serviceProvider = serviceProvider;
         _config = config;
         _ruleEvaluator = ruleEvaluator;
         _cooldownManager = cooldownManager;
-        _alarmRepo = alarmRepo;
-        _ruleRepo = ruleRepo;
+        _delayTracker = delayTracker;
         _timescaleReader = timescaleReader;
         _publisher = publisher;
         _logger = logger;
@@ -78,6 +84,7 @@ public class AlarmEvaluationHostedService : BackgroundService
             }
 
             _cooldownManager.Cleanup();
+            _delayTracker.Cleanup();
             await Task.Delay(TimeSpan.FromSeconds(_config.EvaluationIntervalSeconds), ct);
         }
     }
@@ -86,7 +93,9 @@ public class AlarmEvaluationHostedService : BackgroundService
     {
         try
         {
-            var lastTrigger = await _alarmRepo.GetLastTriggerTimeAsync(ct);
+            using var scope = _serviceProvider.CreateScope();
+            var alarmRepo = scope.ServiceProvider.GetRequiredService<AlarmEventRepository>();
+            var lastTrigger = await alarmRepo.GetLastTriggerTimeAsync(ct);
             if (lastTrigger.HasValue)
             {
                 _logger.LogInformation("Cold start: last alarm trigger at {Time}", lastTrigger.Value);
@@ -116,7 +125,9 @@ public class AlarmEvaluationHostedService : BackgroundService
         {
             try
             {
-                _ruleCache = await _ruleRepo.GetEnabledRulesAsync(ct);
+                using var scope = _serviceProvider.CreateScope();
+                var ruleRepo = scope.ServiceProvider.GetRequiredService<AlarmRuleRepository>();
+                _ruleCache = await ruleRepo.GetEnabledRulesAsync(ct);
                 _ruleCacheTime = DateTimeOffset.UtcNow;
                 _publisher.UpdateRuleNameCache(_ruleCache);
             }
@@ -130,48 +141,75 @@ public class AlarmEvaluationHostedService : BackgroundService
         int triggeredCount = 0;
         int clearedCount = 0;
 
-        foreach (var point in dataPoints)
+        using (var evalScope = _serviceProvider.CreateScope())
         {
-            await _alarmRepo.ClearStaleFlagAsync(point.DeviceId, ct);
+            var alarmRepo = evalScope.ServiceProvider.GetRequiredService<AlarmEventRepository>();
+            var mediator = evalScope.ServiceProvider.GetRequiredService<IMediator>();
 
-            var matchedRules = rules.Where(r => r.Tag == point.Tag && IsScopeMatch(r, point));
-
-            foreach (var rule in matchedRules)
+            foreach (var point in dataPoints)
             {
-                if (_ruleEvaluator.Evaluate(point, rule))
+                await alarmRepo.ClearStaleFlagAsync(point.DeviceId, ct);
+
+                var matchedRules = rules.Where(r => r.Tag == point.Tag && r.TenantId == point.TenantId && IsScopeMatch(r, point));
+
+                foreach (var rule in matchedRules)
                 {
-                    var existing = await _alarmRepo.GetActiveAlarmAsync(rule.Id, point.DeviceId, ct);
-                    if (existing != null) continue;
-
-                    var suppressed = await _alarmRepo.GetSuppressedAlarmAsync(rule.Id, point.DeviceId, ct);
-                    if (suppressed != null) continue;
-
-                    if (_cooldownManager.IsInCooldown(rule.Id, point.DeviceId, rule.CooldownMinutes)) continue;
-
-                    var alarmEvent = CreateAlarmEvent(rule, point);
-                    try
+                    if (_ruleEvaluator.Evaluate(point, rule))
                     {
-                        await _alarmRepo.InsertAsync(alarmEvent, ct);
+                        // 延时检查：条件持续满足 DelaySeconds 后才触发
+                        if (!_delayTracker.IsDelayElapsed(rule.Id, point.DeviceId, rule.DelaySeconds))
+                            continue;
+
+                        var existing = await alarmRepo.GetActiveAlarmAsync(rule.Id, point.DeviceId, ct);
+                        if (existing != null) continue;
+
+                        var suppressed = await alarmRepo.GetSuppressedAlarmAsync(rule.Id, point.DeviceId, ct);
+                        if (suppressed != null) continue;
+
+                        if (_cooldownManager.IsInCooldown(rule.Id, point.DeviceId, rule.CooldownMinutes)) continue;
+
+                        var alarm = DomainAlarm.Create(
+                            rule.Id, rule.TenantId, point.FactoryId, point.WorkshopId,
+                            point.DeviceId, point.Tag,
+                            _ruleEvaluator.ExtractValue(point, rule),
+                            rule.Level,
+                            rule.Description ?? $"{rule.Name}: {rule.OperatorString} {rule.Threshold}",
+                            point.Time);
+
+                        try
+                        {
+                            await alarmRepo.InsertAsync(alarm, ct);
+                        }
+                        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+                        {
+                            _logger.LogDebug("Duplicate alarm ignored (rule={RuleId}, device={DeviceId})", rule.Id, point.DeviceId);
+                            continue;
+                        }
+
+                        _cooldownManager.RecordTrigger(rule.Id, point.DeviceId);
+                        _delayTracker.RecordTriggered(rule.Id, point.DeviceId);
+                        triggeredCount++;
+
+                        // 发布领域事件（通过 MediatR）
+                        foreach (var domainEvent in alarm.DomainEvents)
+                            await mediator.Publish(domainEvent, ct);
+                        alarm.ClearDomainEvents();
+
+                        // 发布到 RabbitMQ（桥接）
+                        await _publisher.PublishAsync(alarm, _config.RabbitMq.Exchange, ct);
+
+                        _logger.LogInformation(
+                            "Alarm triggered: rule={RuleId} device={DeviceId} value={Value:F2}",
+                            rule.Id, point.DeviceId, _ruleEvaluator.ExtractValue(point, rule));
                     }
-                    catch (NpgsqlException ex) when (ex.SqlState == "23505")
+                    else
                     {
-                        _logger.LogDebug("Duplicate alarm ignored (rule={RuleId}, device={DeviceId})", rule.Id, point.DeviceId);
-                        continue;
+                        // 条件不再满足，清除延时记录（下次重新计时）
+                        _delayTracker.ClearDelay(rule.Id, point.DeviceId);
+
+                        var cleared = await TryAutoClearAsync(alarmRepo, mediator, rule, point, ct);
+                        if (cleared) clearedCount++;
                     }
-
-                    _cooldownManager.RecordTrigger(rule.Id, point.DeviceId);
-                    triggeredCount++;
-
-                    await _publisher.PublishAsync(alarmEvent, _config.RabbitMq.Exchange, ct);
-
-                    _logger.LogInformation(
-                        "Alarm triggered: rule={RuleId} device={DeviceId} value={Value:F2}",
-                        rule.Id, point.DeviceId, _ruleEvaluator.ExtractValue(point, rule));
-                }
-                else
-                {
-                    var cleared = await TryAutoClearAsync(rule, point, ct);
-                    if (cleared) clearedCount++;
                 }
             }
         }
@@ -188,7 +226,10 @@ public class AlarmEvaluationHostedService : BackgroundService
         try
         {
             var threshold = DateTimeOffset.UtcNow.AddMinutes(-_config.DeviceOfflineThresholdMinutes);
-            var activeAlarms = await _alarmRepo.GetOpenAlarmsAsync(ct);
+
+            using var scope = _serviceProvider.CreateScope();
+            var alarmRepo = scope.ServiceProvider.GetRequiredService<AlarmEventRepository>();
+            var activeAlarms = await alarmRepo.GetOpenAlarmsAsync(ct);
 
             foreach (var alarm in activeAlarms)
             {
@@ -197,7 +238,8 @@ public class AlarmEvaluationHostedService : BackgroundService
                     var lastDataTime = await _timescaleReader.GetLastDataTimeAsync(alarm.DeviceId, ct);
                     if (lastDataTime < threshold)
                     {
-                        await _alarmRepo.MarkStaleAsync(alarm.Id, ct);
+                        alarm.MarkStale();
+                        await alarmRepo.UpdateAsync(alarm, ct);
                         _logger.LogWarning(
                             "Device {DeviceId} offline, alarm {AlarmId} marked stale",
                             alarm.DeviceId, alarm.Id);
@@ -211,18 +253,20 @@ public class AlarmEvaluationHostedService : BackgroundService
         }
     }
 
-    private async Task<bool> TryAutoClearAsync(AlarmRule rule, DataPointReadModel point, CancellationToken ct)
+    private async Task<bool> TryAutoClearAsync(AlarmEventRepository alarmRepo, IMediator mediator, DomainAlarmRule rule, DataPointReadModel point, CancellationToken ct)
     {
         if (!_ruleEvaluator.ShouldClear(point, rule)) return false;
 
-        var activeAlarm = await _alarmRepo.GetActiveAlarmAsync(rule.Id, point.DeviceId, ct);
+        var activeAlarm = await alarmRepo.GetActiveAlarmAsync(rule.Id, point.DeviceId, ct);
         if (activeAlarm != null)
         {
-            activeAlarm.Status = AlarmStatus.Cleared;
-            activeAlarm.ClearedAt = DateTimeOffset.UtcNow;
-            activeAlarm.ClearValue = _ruleEvaluator.ExtractValue(point, rule);
-            await _alarmRepo.UpdateAsync(activeAlarm, ct);
+            activeAlarm.AutoClear(_ruleEvaluator.ExtractValue(point, rule));
+            await alarmRepo.UpdateAsync(activeAlarm, ct);
             _cooldownManager.ResetCooldown(rule.Id, point.DeviceId);
+
+            foreach (var domainEvent in activeAlarm.DomainEvents)
+                await mediator.Publish(domainEvent, ct);
+            activeAlarm.ClearDomainEvents();
 
             await _publisher.PublishAsync(activeAlarm, _config.RabbitMq.Exchange, ct);
 
@@ -232,14 +276,16 @@ public class AlarmEvaluationHostedService : BackgroundService
             return true;
         }
 
-        var suppressedAlarm = await _alarmRepo.GetSuppressedAlarmAsync(rule.Id, point.DeviceId, ct);
+        var suppressedAlarm = await alarmRepo.GetSuppressedAlarmAsync(rule.Id, point.DeviceId, ct);
         if (suppressedAlarm != null)
         {
-            suppressedAlarm.Status = AlarmStatus.Cleared;
-            suppressedAlarm.ClearedAt = DateTimeOffset.UtcNow;
-            suppressedAlarm.ClearValue = _ruleEvaluator.ExtractValue(point, rule);
-            await _alarmRepo.UpdateAsync(suppressedAlarm, ct);
+            suppressedAlarm.AutoClear(_ruleEvaluator.ExtractValue(point, rule));
+            await alarmRepo.UpdateAsync(suppressedAlarm, ct);
             _cooldownManager.ResetCooldown(rule.Id, point.DeviceId);
+
+            foreach (var domainEvent in suppressedAlarm.DomainEvents)
+                await mediator.Publish(domainEvent, ct);
+            suppressedAlarm.ClearDomainEvents();
 
             await _publisher.PublishAsync(suppressedAlarm, _config.RabbitMq.Exchange, ct);
 
@@ -252,7 +298,7 @@ public class AlarmEvaluationHostedService : BackgroundService
         return false;
     }
 
-    private static bool IsScopeMatch(AlarmRule rule, DataPointReadModel point)
+    private static bool IsScopeMatch(DomainAlarmRule rule, DataPointReadModel point)
     {
         if (rule.DeviceId is not null)
             return rule.DeviceId == point.DeviceId
@@ -264,26 +310,8 @@ public class AlarmEvaluationHostedService : BackgroundService
         return true;
     }
 
-    private AlarmEvent CreateAlarmEvent(AlarmRule rule, DataPointReadModel point)
+    private static bool IsUniqueViolation(DbUpdateException ex)
     {
-        var triggerValue = _ruleEvaluator.ExtractValue(point, rule);
-        var message = rule.Description ?? $"{rule.Name}: {point.Tag} {rule.Operator} {rule.Threshold}";
-
-        return new AlarmEvent
-        {
-            Id = Guid.NewGuid(),
-            RuleId = rule.Id,
-            TenantId = rule.TenantId,
-            FactoryId = point.FactoryId,
-            WorkshopId = point.WorkshopId,
-            DeviceId = point.DeviceId,
-            Tag = point.Tag,
-            TriggerValue = triggerValue,
-            Level = rule.Level,
-            Status = AlarmStatus.Active,
-            IsStale = false,
-            Message = message,
-            TriggeredAt = point.Time
-        };
+        return ex.InnerException is Npgsql.NpgsqlException pgEx && pgEx.SqlState == "23505";
     }
 }
